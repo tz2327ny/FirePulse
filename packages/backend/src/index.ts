@@ -6,14 +6,18 @@ import { createApp } from './server.js';
 import { logger } from './lib/logger.js';
 import { setupSocketServer } from './websocket/socketServer.js';
 import { startUdpServer, stopUdpServer } from './udp/udpServer.js';
-import { startWriteBuffer, stopWriteBuffer } from './services/telemetryService.js';
+import { startWriteBuffer, stopWriteBuffer, startCurrentTelemetryFlush, stopCurrentTelemetryFlush } from './services/telemetryService.js';
 import { startStaleSweeper, stopStaleSweeper } from './jobs/staleSweeper.js';
 import { startRawTelemetryPruner, stopRawTelemetryPruner } from './jobs/rawTelemetryPruner.js';
 import { startRollupGenerator, stopRollupGenerator } from './jobs/rollupGenerator.js';
+import { initSqlitePragmas } from './lib/prisma.js';
 
 let httpServer: http.Server | null = null;
 
 export async function startBackend(): Promise<void> {
+  // Optimize SQLite for high-throughput writes
+  await initSqlitePragmas();
+
   const app = createApp();
   httpServer = http.createServer(app);
 
@@ -25,6 +29,7 @@ export async function startBackend(): Promise<void> {
 
   // Background jobs
   startWriteBuffer();
+  startCurrentTelemetryFlush();
   startStaleSweeper();
   startRawTelemetryPruner();
   startRollupGenerator();
@@ -46,6 +51,7 @@ export async function stopBackend(): Promise<void> {
   logger.info('Shutting down...');
   stopUdpServer();
   stopWriteBuffer();
+  stopCurrentTelemetryFlush();
   stopStaleSweeper();
   stopRawTelemetryPruner();
   stopRollupGenerator();

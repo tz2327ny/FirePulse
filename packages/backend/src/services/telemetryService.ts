@@ -9,7 +9,31 @@ import {
 } from '@heartbeat/shared';
 import type { CurrentTelemetryDTO } from '@heartbeat/shared';
 
-// Write buffer for raw telemetry
+// ── In-memory caches ─────────────────────────────────────────────────
+
+/** Cache of known devices by MAC address */
+const deviceCache = new Map<string, { id: string; shortId: string; deviceName: string | null; isIgnored: boolean; isArchived: boolean }>();
+
+/** In-memory current telemetry state — the single source of truth between DB flushes */
+interface InMemoryCT {
+  deviceId: string;
+  deviceMac: string;
+  heartRate: number | null;
+  smoothedRssi: number | null;
+  bestReceiverHwId: string;
+  receiverCount: number;
+  packetRate: number;
+  lastSeenAt: Date;
+  freshnessState: string;
+  dirty: boolean; // needs DB write
+}
+const currentTelemetryCache = new Map<string, InMemoryCT>();
+
+/** Track which receivers have been seen per device in a sliding window */
+const recentReceivers = new Map<string, Map<string, number>>(); // deviceMac -> (receiverHwId -> lastSeen timestamp)
+
+// ── Raw telemetry write buffer (already batched) ─────────────────────
+
 interface RawTelemetryInput {
   receiverHwId: string;
   deviceMac: string;
@@ -29,7 +53,7 @@ export function startWriteBuffer() {
 
 export function stopWriteBuffer() {
   if (flushTimer) clearInterval(flushTimer);
-  flushWriteBuffer(); // flush remaining
+  flushWriteBuffer();
 }
 
 async function flushWriteBuffer() {
@@ -46,6 +70,68 @@ export function bufferRawTelemetry(input: RawTelemetryInput) {
   writeBuffer.push(input);
 }
 
+// ── Current telemetry DB flush (every 2s) ────────────────────────────
+
+let ctFlushTimer: NodeJS.Timeout | null = null;
+
+export function startCurrentTelemetryFlush() {
+  ctFlushTimer = setInterval(flushCurrentTelemetry, 2000);
+}
+
+export function stopCurrentTelemetryFlush() {
+  if (ctFlushTimer) clearInterval(ctFlushTimer);
+  flushCurrentTelemetry();
+}
+
+async function flushCurrentTelemetry() {
+  const dirtyEntries = [...currentTelemetryCache.values()].filter((ct) => ct.dirty);
+  if (dirtyEntries.length === 0) return;
+
+  // Mark all as clean before async write (new packets during write will re-dirty)
+  for (const entry of dirtyEntries) {
+    entry.dirty = false;
+  }
+
+  try {
+    // Use a transaction for all upserts to minimize SQLite lock contention
+    await prisma.$transaction(
+      dirtyEntries.map((ct) =>
+        prisma.currentTelemetry.upsert({
+          where: { deviceMac: ct.deviceMac },
+          create: {
+            deviceId: ct.deviceId,
+            deviceMac: ct.deviceMac,
+            heartRate: ct.heartRate,
+            smoothedRssi: ct.smoothedRssi,
+            bestReceiverHwId: ct.bestReceiverHwId,
+            receiverCount: ct.receiverCount,
+            packetRate: ct.packetRate,
+            lastSeenAt: ct.lastSeenAt,
+            freshnessState: ct.freshnessState,
+          },
+          update: {
+            heartRate: ct.heartRate,
+            smoothedRssi: ct.smoothedRssi,
+            bestReceiverHwId: ct.bestReceiverHwId,
+            receiverCount: ct.receiverCount,
+            packetRate: ct.packetRate,
+            lastSeenAt: ct.lastSeenAt,
+            freshnessState: ct.freshnessState,
+          },
+        })
+      )
+    );
+  } catch (err) {
+    logger.error({ err, count: dirtyEntries.length }, 'Failed to flush current telemetry');
+    // Re-mark as dirty so next flush retries
+    for (const entry of dirtyEntries) {
+      entry.dirty = true;
+    }
+  }
+}
+
+// ── Main telemetry processing (mostly in-memory now) ─────────────────
+
 export async function processTelemetry(
   receiverHwId: string,
   deviceMac: string,
@@ -55,7 +141,7 @@ export async function processTelemetry(
   rawPayload: string | null,
   packetTimestamp: Date
 ) {
-  // 1. Buffer raw insert
+  // 1. Buffer raw insert (already batched)
   bufferRawTelemetry({
     receiverHwId,
     deviceMac,
@@ -66,72 +152,106 @@ export async function processTelemetry(
     packetTimestamp,
   });
 
-  // 2. Auto-register device if unknown
-  let device = await prisma.device.findUnique({ where: { macAddress: deviceMac } });
+  // 2. Auto-register device if unknown (cached)
+  let device = deviceCache.get(deviceMac);
   if (!device) {
-    device = await prisma.device.create({
-      data: {
-        macAddress: deviceMac,
-        shortId: macToShortId(deviceMac),
-        deviceName: deviceName || null,
-        deviceType: 'unknown',
-      },
-    });
-    logger.info({ deviceMac, shortId: device.shortId }, 'Auto-registered new device');
+    let dbDevice = await prisma.device.findUnique({ where: { macAddress: deviceMac } });
+    if (!dbDevice) {
+      dbDevice = await prisma.device.create({
+        data: {
+          macAddress: deviceMac,
+          shortId: macToShortId(deviceMac),
+          deviceName: deviceName || null,
+          deviceType: 'unknown',
+        },
+      });
+      logger.info({ deviceMac, shortId: dbDevice.shortId }, 'Auto-registered new device');
+    }
+    device = {
+      id: dbDevice.id,
+      shortId: dbDevice.shortId,
+      deviceName: dbDevice.deviceName,
+      isIgnored: dbDevice.isIgnored,
+      isArchived: dbDevice.isArchived,
+    };
+    deviceCache.set(deviceMac, device);
   }
 
-  // 3. Merge: query raw packets in merge window
-  const mergeWindowStart = new Date(Date.now() - config.mergeWindowMs);
-  const recentPackets = await prisma.rawTelemetry.findMany({
-    where: {
-      deviceMac,
-      receivedAt: { gte: mergeWindowStart },
-    },
-    orderBy: { rssi: 'desc' }, // best RSSI first
-  });
+  // 3. Track receivers in sliding window (in-memory)
+  const now = Date.now();
+  if (!recentReceivers.has(deviceMac)) {
+    recentReceivers.set(deviceMac, new Map());
+  }
+  const receivers = recentReceivers.get(deviceMac)!;
+  receivers.set(receiverHwId, now);
 
-  // Best packet (highest RSSI)
-  const bestPacket = recentPackets[0];
-  const receiverCount = new Set(recentPackets.map((p) => p.receiverHwId)).size;
-  const windowDurationSec = config.mergeWindowMs / 1000;
-  const packetRate = recentPackets.length / windowDurationSec;
+  // Clean old entries (> merge window)
+  for (const [rid, ts] of receivers) {
+    if (now - ts > config.mergeWindowMs) {
+      receivers.delete(rid);
+    }
+  }
 
-  const mergedHr = bestPacket?.heartRate ?? heartRate;
-  const mergedRssi = bestPacket?.rssi ?? rssi;
-  const bestReceiver = bestPacket?.receiverHwId ?? receiverHwId;
+  const receiverCount = receivers.size;
   const freshness = computeFreshnessState(new Date());
 
-  // 4. Upsert current telemetry
-  await prisma.currentTelemetry.upsert({
-    where: { deviceMac },
-    create: {
-      deviceId: device.id,
-      deviceMac,
-      heartRate: mergedHr,
-      smoothedRssi: mergedRssi,
-      bestReceiverHwId: bestReceiver,
-      receiverCount,
-      packetRate,
-      lastSeenAt: new Date(),
-      freshnessState: freshness,
-    },
-    update: {
-      heartRate: mergedHr,
-      smoothedRssi: mergedRssi,
-      bestReceiverHwId: bestReceiver,
-      receiverCount,
-      packetRate,
-      lastSeenAt: new Date(),
-      freshnessState: freshness,
-    },
+  // 4. Update in-memory current telemetry (NO DB HIT)
+  const existing = currentTelemetryCache.get(deviceMac);
+  const isBetterRssi = !existing || rssi > (existing.smoothedRssi || -100);
+
+  currentTelemetryCache.set(deviceMac, {
+    deviceId: device.id,
+    deviceMac,
+    heartRate: isBetterRssi ? heartRate : (existing?.heartRate ?? heartRate),
+    smoothedRssi: isBetterRssi ? rssi : (existing?.smoothedRssi ?? rssi),
+    bestReceiverHwId: isBetterRssi ? receiverHwId : (existing?.bestReceiverHwId ?? receiverHwId),
+    receiverCount,
+    packetRate: 0, // will be computed if needed
+    lastSeenAt: new Date(),
+    freshnessState: freshness,
+    dirty: true,
   });
 
-  // 5. Publish update via Redis
-  const dto = await buildCurrentTelemetryDTO(deviceMac);
+  // 5. Emit WebSocket event from in-memory state (NO DB HIT)
+  const dto = buildDTOFromMemory(deviceMac);
   if (dto) {
     eventBus.emit('telemetry:updates', dto);
   }
 }
+
+// ── Build DTO from in-memory cache (no DB queries) ───────────────────
+
+function buildDTOFromMemory(deviceMac: string): CurrentTelemetryDTO | null {
+  const ct = currentTelemetryCache.get(deviceMac);
+  const device = deviceCache.get(deviceMac);
+  if (!ct || !device) return null;
+
+  const freshness = computeFreshnessState(ct.lastSeenAt);
+  const signalBars = computeSignalBars(ct.smoothedRssi || -100, ct.packetRate, ct.receiverCount);
+
+  return {
+    deviceMac: ct.deviceMac,
+    shortId: device.shortId,
+    deviceName: device.deviceName,
+    heartRate: ct.heartRate,
+    smoothedRssi: ct.smoothedRssi,
+    bestReceiverHwId: ct.bestReceiverHwId,
+    bestReceiverName: null, // skip receiver name lookup for performance
+    receiverCount: ct.receiverCount,
+    packetRate: ct.packetRate,
+    lastSeenAt: ct.lastSeenAt.toISOString(),
+    freshnessState: freshness,
+    signalBars,
+    participantId: null,
+    participantFirstName: null,
+    participantLastName: null,
+    participantCompany: null,
+    participantStatus: null,
+    sessionParticipantId: null,
+  };
+}
+
+// ── Full DTO builder (for API responses, hits DB for assignments) ────
 
 export async function buildCurrentTelemetryDTO(
   deviceMac: string
@@ -201,6 +321,19 @@ export async function buildCurrentTelemetryDTO(
 }
 
 export async function getAllCurrentTelemetry(): Promise<CurrentTelemetryDTO[]> {
+  // If we have in-memory data, serve from there (much faster)
+  if (currentTelemetryCache.size > 0) {
+    const results: CurrentTelemetryDTO[] = [];
+    for (const [mac] of currentTelemetryCache) {
+      const device = deviceCache.get(mac);
+      if (device?.isIgnored || device?.isArchived) continue;
+      const dto = buildDTOFromMemory(mac);
+      if (dto) results.push(dto);
+    }
+    return results;
+  }
+
+  // Fallback to DB
   const allCt = await prisma.currentTelemetry.findMany({
     include: { device: true },
   });
