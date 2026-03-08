@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+packages/backend/dist/
+packages/frontend/dist/
+packages/shared/dist/
+dist-electron/
+
+# Electron builder output
+release/
+
+# Appliance build output
+deploy/firepulse-appliance/
+.template-db-tmp/
+
+# Database files
+*.db
+*.db-journal
+resources/template.db
+
+# Environment
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

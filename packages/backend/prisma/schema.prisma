@@ -1,0 +1,456 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// 1. users — Authentication
+// ============================================================
+model User {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  passwordHash String   @map("password_hash")
+  displayName  String   @map("display_name")
+  role         String   @default("instructor")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  participantStatusEvents ParticipantStatusEvent[] @relation("StatusChangedBy")
+  deviceAssignments       DeviceAssignment[]       @relation("AssignedBy")
+  acknowledgedAlerts      Alert[]                  @relation("AcknowledgedBy")
+  sessionEvents           SessionEvent[]           @relation("EventUser")
+  auditLogs               AuditLog[]               @relation("AuditUser")
+  rehabVisitsCreated      RehabVisit[]             @relation("RehabCreatedBy")
+  rehabCheckpointsEntered RehabCheckpoint[]        @relation("CheckpointEnteredBy")
+
+  @@map("users")
+}
+
+// ============================================================
+// 2. settings — Global/system settings (key-value)
+// ============================================================
+model Setting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+// ============================================================
+// 3. classes — Reusable class templates
+// ============================================================
+model Class {
+  id          String   @id @default(uuid())
+  name        String
+  courseType   String?  @map("course_type")
+  description String?
+  isArchived  Boolean  @default(false) @map("is_archived")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  classParticipants ClassParticipant[]
+  sessions          Session[]
+
+  @@map("classes")
+}
+
+// ============================================================
+// 4. participants — Master firefighter roster
+// ============================================================
+model Participant {
+  id         String   @id @default(uuid())
+  firstName  String   @map("first_name")
+  lastName   String   @map("last_name")
+  company    String
+  isArchived Boolean  @default(false) @map("is_archived")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  classParticipants   ClassParticipant[]
+  sessionParticipants SessionParticipant[]
+  deviceAssignments   DeviceAssignment[]
+  alerts              Alert[]
+  rehabVisits         RehabVisit[]
+  telemetryRollups    SessionTelemetryRollup[]
+  sessionEvents       SessionEvent[]
+
+  @@map("participants")
+}
+
+// ============================================================
+// 5. class_participants — Roster membership for a class template
+// ============================================================
+model ClassParticipant {
+  id                     String   @id @default(uuid())
+  classId                String   @map("class_id")
+  participantId          String   @map("participant_id")
+  defaultCompanyOverride String?  @map("default_company_override")
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  // Relations
+  class       Class       @relation(fields: [classId], references: [id])
+  participant Participant @relation(fields: [participantId], references: [id])
+
+  @@unique([classId, participantId])
+  @@map("class_participants")
+}
+
+// ============================================================
+// 6. sessions — Live training sessions
+// ============================================================
+model Session {
+  id        String    @id @default(uuid())
+  classId   String?   @map("class_id")
+  name      String
+  state     String    @default("standby")
+  startedAt DateTime? @map("started_at")
+  pausedAt  DateTime? @map("paused_at")
+  endedAt   DateTime? @map("ended_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  class               Class?                   @relation(fields: [classId], references: [id])
+  sessionParticipants SessionParticipant[]
+  deviceAssignments   DeviceAssignment[]
+  alerts              Alert[]
+  sessionEvents       SessionEvent[]
+  rehabVisits         RehabVisit[]
+  telemetryRollups    SessionTelemetryRollup[]
+
+  @@index([state])
+  @@map("sessions")
+}
+
+// ============================================================
+// 7. session_participants — Participants for a specific session
+// ============================================================
+model SessionParticipant {
+  id            String   @id @default(uuid())
+  sessionId     String   @map("session_id")
+  participantId String   @map("participant_id")
+  status        String   @default("present")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  session      Session                  @relation(fields: [sessionId], references: [id])
+  participant  Participant              @relation(fields: [participantId], references: [id])
+  statusEvents ParticipantStatusEvent[]
+
+  @@unique([sessionId, participantId])
+  @@map("session_participants")
+}
+
+// ============================================================
+// 8. participant_status_events — Timestamped status changes
+// ============================================================
+model ParticipantStatusEvent {
+  id                   String   @id @default(uuid())
+  sessionParticipantId String   @map("session_participant_id")
+  oldStatus            String?  @map("old_status")
+  newStatus            String   @map("new_status")
+  changedByUserId      String?  @map("changed_by_user_id")
+  changedAt            DateTime @default(now()) @map("changed_at")
+  note                 String?
+
+  // Relations
+  sessionParticipant SessionParticipant @relation(fields: [sessionParticipantId], references: [id])
+  changedByUser      User?              @relation("StatusChangedBy", fields: [changedByUserId], references: [id])
+
+  @@index([sessionParticipantId])
+  @@map("participant_status_events")
+}
+
+// ============================================================
+// 9. devices — Known heart-rate devices
+// ============================================================
+model Device {
+  id         String   @id @default(uuid())
+  macAddress String   @unique @map("mac_address")
+  shortId    String   @map("short_id")
+  deviceName String?  @map("device_name")
+  deviceType String   @default("unknown") @map("device_type")
+  isIgnored  Boolean  @default(false) @map("is_ignored")
+  isArchived Boolean  @default(false) @map("is_archived")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  deviceAssignments  DeviceAssignment[]
+  alerts             Alert[]
+  telemetryRollups   SessionTelemetryRollup[]
+  currentTelemetry   CurrentTelemetry?
+  sessionEvents      SessionEvent[]
+
+  @@map("devices")
+}
+
+// ============================================================
+// 10. device_assignments — Historical assignment model
+// ============================================================
+model DeviceAssignment {
+  id               String    @id @default(uuid())
+  deviceId         String    @map("device_id")
+  sessionId        String?   @map("session_id")
+  participantId    String    @map("participant_id")
+  assignedByUserId String?   @map("assigned_by_user_id")
+  assignedAt       DateTime  @default(now()) @map("assigned_at")
+  unassignedAt     DateTime? @map("unassigned_at")
+  note             String?
+
+  // Relations
+  device      Device      @relation(fields: [deviceId], references: [id])
+  session     Session?    @relation(fields: [sessionId], references: [id])
+  participant Participant @relation(fields: [participantId], references: [id])
+  assignedBy  User?       @relation("AssignedBy", fields: [assignedByUserId], references: [id])
+
+  @@index([deviceId, unassignedAt])
+  @@index([participantId])
+  @@index([sessionId])
+  @@map("device_assignments")
+}
+
+// ============================================================
+// 11. receivers — ESP32 receiver nodes
+// ============================================================
+model Receiver {
+  id              String    @id @default(uuid())
+  receiverHwId    String    @unique @map("receiver_hw_id")
+  name            String
+  locationLabel   String?   @map("location_label")
+  ipAddress       String?   @map("ip_address")
+  firmwareVersion String?   @map("firmware_version")
+  wifiRssi        Int?      @map("wifi_rssi")
+  uptimeSeconds   Int?      @map("uptime_seconds")
+  isOnline        Boolean   @default(false) @map("is_online")
+  lastHeartbeatAt DateTime? @map("last_heartbeat_at")
+  lastSeenAt      DateTime? @map("last_seen_at")
+  isArchived      Boolean   @default(false) @map("is_archived")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  receiverStatusEvents ReceiverStatusEvent[]
+
+  @@map("receivers")
+}
+
+// ============================================================
+// 12. receiver_status_events — Online/offline transitions
+// ============================================================
+model ReceiverStatusEvent {
+  id         String   @id @default(uuid())
+  receiverId String   @map("receiver_id")
+  oldStatus  String?  @map("old_status")
+  newStatus  String   @map("new_status")
+  occurredAt DateTime @default(now()) @map("occurred_at")
+  note       String?
+
+  // Relations
+  receiver Receiver @relation(fields: [receiverId], references: [id])
+
+  @@index([receiverId, occurredAt])
+  @@map("receiver_status_events")
+}
+
+// ============================================================
+// 13. raw_telemetry — Append-only packet storage
+// ============================================================
+model RawTelemetry {
+  id               Int      @id @default(autoincrement())
+  receiverHwId     String   @map("receiver_hw_id")
+  deviceMac        String   @map("device_mac")
+  deviceName       String?  @map("device_name")
+  heartRate        Int?     @map("heart_rate")
+  rssi             Int
+  rawPayload       String?  @map("raw_payload")
+  packetTimestamp  DateTime @map("packet_timestamp")
+  receivedAt       DateTime @default(now()) @map("received_at")
+
+  @@index([deviceMac, receivedAt])
+  @@index([receivedAt])
+  @@index([receiverHwId, receivedAt])
+  @@map("raw_telemetry")
+}
+
+// ============================================================
+// 14. current_telemetry — Merged current device state
+// ============================================================
+model CurrentTelemetry {
+  id               String   @id @default(uuid())
+  deviceId         String   @unique @map("device_id")
+  deviceMac        String   @unique @map("device_mac")
+  heartRate        Int?     @map("heart_rate")
+  smoothedRssi     Int?     @map("smoothed_rssi")
+  bestReceiverHwId String?  @map("best_receiver_hw_id")
+  receiverCount    Int      @default(0) @map("receiver_count")
+  packetRate       Float    @default(0) @map("packet_rate")
+  lastSeenAt       DateTime @map("last_seen_at")
+  freshnessState   String   @default("offline") @map("freshness_state")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  device Device @relation(fields: [deviceId], references: [id])
+
+  @@map("current_telemetry")
+}
+
+// ============================================================
+// 15. session_telemetry_rollups — Periodic rollups for graphing
+// ============================================================
+model SessionTelemetryRollup {
+  id             Int      @id @default(autoincrement())
+  sessionId      String   @map("session_id")
+  participantId  String   @map("participant_id")
+  deviceId       String   @map("device_id")
+  capturedAt     DateTime @map("captured_at")
+  heartRate      Int?     @map("heart_rate")
+  signalScore    Int?     @map("signal_score")
+  freshnessState String?  @map("freshness_state")
+
+  // Relations
+  session     Session     @relation(fields: [sessionId], references: [id])
+  participant Participant @relation(fields: [participantId], references: [id])
+  device      Device      @relation(fields: [deviceId], references: [id])
+
+  @@index([sessionId, participantId, capturedAt])
+  @@index([capturedAt])
+  @@map("session_telemetry_rollups")
+}
+
+// ============================================================
+// 16. alerts — Alert lifecycle
+// ============================================================
+model Alert {
+  id                   String    @id @default(uuid())
+  sessionId            String    @map("session_id")
+  participantId        String?   @map("participant_id")
+  deviceId             String?   @map("device_id")
+  alertSource          String    @map("alert_source")
+  alertLevel           String    @map("alert_level")
+  status               String    @default("active")
+  openedAt             DateTime  @default(now()) @map("opened_at")
+  acknowledgedAt       DateTime? @map("acknowledged_at")
+  clearedAt            DateTime? @map("cleared_at")
+  acknowledgedByUserId String?   @map("acknowledged_by_user_id")
+  metadataJson         String?   @map("metadata_json")
+
+  // Relations
+  session        Session      @relation(fields: [sessionId], references: [id])
+  participant    Participant? @relation(fields: [participantId], references: [id])
+  device         Device?      @relation(fields: [deviceId], references: [id])
+  acknowledgedBy User?        @relation("AcknowledgedBy", fields: [acknowledgedByUserId], references: [id])
+
+  @@index([sessionId, status])
+  @@index([participantId])
+  @@map("alerts")
+}
+
+// ============================================================
+// 17. session_events — Operational event log per session
+// ============================================================
+model SessionEvent {
+  id            String   @id @default(uuid())
+  sessionId     String   @map("session_id")
+  eventType     String   @map("event_type")
+  participantId String?  @map("participant_id")
+  deviceId      String?  @map("device_id")
+  receiverId    String?  @map("receiver_id")
+  userId        String?  @map("user_id")
+  payloadJson   String?  @map("payload_json")
+  occurredAt    DateTime @default(now()) @map("occurred_at")
+
+  // Relations
+  session     Session      @relation(fields: [sessionId], references: [id])
+  user        User?        @relation("EventUser", fields: [userId], references: [id])
+  participant Participant? @relation(fields: [participantId], references: [id])
+  device      Device?      @relation(fields: [deviceId], references: [id])
+
+  @@index([sessionId, occurredAt])
+  @@index([eventType])
+  @@map("session_events")
+}
+
+// ============================================================
+// 18. audit_log — System-wide audit log
+// ============================================================
+model AuditLog {
+  id          String   @id @default(uuid())
+  action      String
+  entityType  String?  @map("entity_type")
+  entityId    String?  @map("entity_id")
+  userId      String?  @map("user_id")
+  details     String?
+  occurredAt  DateTime @default(now()) @map("occurred_at")
+
+  // Relations
+  user User? @relation("AuditUser", fields: [userId], references: [id])
+
+  @@index([occurredAt])
+  @@index([entityType, entityId])
+  @@map("audit_log")
+}
+
+// ============================================================
+// 19. rehab_visits — Rehab tracking
+// ============================================================
+model RehabVisit {
+  id               String    @id @default(uuid())
+  sessionId        String    @map("session_id")
+  participantId    String    @map("participant_id")
+  startedAt        DateTime  @default(now()) @map("started_at")
+  endedAt          DateTime? @map("ended_at")
+  finalDisposition String?   @map("final_disposition")
+  createdByUserId  String?   @map("created_by_user_id")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  session     Session           @relation(fields: [sessionId], references: [id])
+  participant Participant       @relation(fields: [participantId], references: [id])
+  createdBy   User?             @relation("RehabCreatedBy", fields: [createdByUserId], references: [id])
+  checkpoints RehabCheckpoint[]
+
+  @@index([sessionId, participantId])
+  @@map("rehab_visits")
+}
+
+// ============================================================
+// 20. rehab_checkpoints — Rehab checkpoint vitals
+// ============================================================
+model RehabCheckpoint {
+  id                String   @id @default(uuid())
+  rehabVisitId      String   @map("rehab_visit_id")
+  checkpointType    String   @map("checkpoint_type")
+  timestamp         DateTime @default(now())
+  liveHrSnapshot    Int?     @map("live_hr_snapshot")
+  manualHr          Int?     @map("manual_hr")
+  bpSystolic        Int?     @map("bp_systolic")
+  bpDiastolic       Int?     @map("bp_diastolic")
+  respirations      Int?
+  spo2              Int?
+  temperature       Float?
+  temperatureMethod String?  @map("temperature_method")
+  note              String?
+  disposition       String?
+  enteredByUserId   String?  @map("entered_by_user_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  // Relations
+  rehabVisit  RehabVisit @relation(fields: [rehabVisitId], references: [id])
+  enteredBy   User?      @relation("CheckpointEnteredBy", fields: [enteredByUserId], references: [id])
+
+  @@index([rehabVisitId])
+  @@map("rehab_checkpoints")
+}

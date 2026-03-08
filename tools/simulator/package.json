@@ -1,0 +1,14 @@
+{
+  "name": "@firepulse/simulator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx simulate.ts",
+    "sim:5": "tsx simulate.ts --devices 5 --receivers 2",
+    "sim:25": "tsx simulate.ts --devices 25 --receivers 3"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

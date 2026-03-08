@@ -1,0 +1,42 @@
+appId: com.firepulse.app
+productName: FirePulse
+copyright: Copyright © 2026 FirePulse. All Rights Reserved.
+
+# CRITICAL: asar must be false — child_process.fork() cannot run scripts
+# from inside an asar archive, and Prisma needs filesystem access.
+asar: false
+
+win:
+  target: nsis
+  icon: resources/icon.ico
+
+nsis:
+  oneClick: false
+  perMachine: true
+  allowToChangeInstallationDirectory: true
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
+  license: LICENSE
+
+afterPack: ./scripts/after-pack.cjs
+
+directories:
+  output: release
+
+files:
+  - dist-electron/**
+  - packages/backend/dist/**
+  - packages/backend/package.json
+  - packages/backend/prisma/**
+  - packages/frontend/dist/**
+  - packages/shared/dist/**
+  - packages/shared/package.json
+  - node_modules/**
+  - "!**/node_modules/.cache"
+  - "!**/.git"
+  - "!**/node_modules/electron/**"
+  - "!**/node_modules/electron-builder/**"
+
+extraResources:
+  - from: resources/
+    to: resources/
