@@ -75,18 +75,33 @@ async function main() {
   }
   console.log(`  Created ${defaultSettings.length} default settings`);
 
-  // ---- Participants ----
+  // ---- Participants (20 — matches simulator device count) ----
   const participants = [
+    // Engine 1 — 4 crew
     { firstName: 'John', lastName: 'Smith', company: 'Engine 1' },
     { firstName: 'Mike', lastName: 'Johnson', company: 'Engine 1' },
-    { firstName: 'Sarah', lastName: 'Williams', company: 'Ladder 2' },
-    { firstName: 'David', lastName: 'Brown', company: 'Ladder 2' },
-    { firstName: 'Chris', lastName: 'Davis', company: 'Engine 3' },
-    { firstName: 'Emily', lastName: 'Wilson', company: 'Engine 3' },
-    { firstName: 'James', lastName: 'Taylor', company: 'Rescue 1' },
-    { firstName: 'Maria', lastName: 'Garcia', company: 'Rescue 1' },
-    { firstName: 'Robert', lastName: 'Martinez', company: 'Engine 4' },
-    { firstName: 'Lisa', lastName: 'Anderson', company: 'Engine 4' },
+    { firstName: 'Sarah', lastName: 'Williams', company: 'Engine 1' },
+    { firstName: 'David', lastName: 'Brown', company: 'Engine 1' },
+    // Ladder 2 — 4 crew
+    { firstName: 'Chris', lastName: 'Davis', company: 'Ladder 2' },
+    { firstName: 'Emily', lastName: 'Wilson', company: 'Ladder 2' },
+    { firstName: 'James', lastName: 'Taylor', company: 'Ladder 2' },
+    { firstName: 'Maria', lastName: 'Garcia', company: 'Ladder 2' },
+    // Engine 3 — 4 crew
+    { firstName: 'Robert', lastName: 'Martinez', company: 'Engine 3' },
+    { firstName: 'Lisa', lastName: 'Anderson', company: 'Engine 3' },
+    { firstName: 'Kevin', lastName: 'Thomas', company: 'Engine 3' },
+    { firstName: 'Rachel', lastName: 'Jackson', company: 'Engine 3' },
+    // Rescue 1 — 4 crew
+    { firstName: 'Brian', lastName: 'White', company: 'Rescue 1' },
+    { firstName: 'Nicole', lastName: 'Harris', company: 'Rescue 1' },
+    { firstName: 'Derek', lastName: 'Clark', company: 'Rescue 1' },
+    { firstName: 'Amanda', lastName: 'Lewis', company: 'Rescue 1' },
+    // Engine 4 — 4 crew
+    { firstName: 'Jason', lastName: 'Robinson', company: 'Engine 4' },
+    { firstName: 'Megan', lastName: 'Walker', company: 'Engine 4' },
+    { firstName: 'Tony', lastName: 'Hall', company: 'Engine 4' },
+    { firstName: 'Laura', lastName: 'Allen', company: 'Engine 4' },
   ];
 
   const existingCount = await prisma.participant.count();
@@ -97,19 +112,20 @@ async function main() {
     console.log(`  Participants already exist (${existingCount}), skipping`);
   }
 
-  // ---- Devices ----
-  const devices = [
-    { macAddress: 'A0:9E:1A:4F:8B:21', shortId: '8B21', deviceName: 'Polar OH1+ 8B21', deviceType: 'oh1_plus' },
-    { macAddress: 'A0:9E:1A:4F:7C:32', shortId: '7C32', deviceName: 'Polar OH1+ 7C32', deviceType: 'oh1_plus' },
-    { macAddress: 'A0:9E:1A:4F:6D:43', shortId: '6D43', deviceName: 'Polar OH1+ 6D43', deviceType: 'oh1_plus' },
-    { macAddress: 'B0:B1:13:2A:5E:54', shortId: '5E54', deviceName: 'Polar H10 5E54', deviceType: 'chest_strap' },
-    { macAddress: 'B0:B1:13:2A:4F:65', shortId: '4F65', deviceName: 'Polar H10 4F65', deviceType: 'chest_strap' },
-    { macAddress: 'C0:D2:14:3B:3A:76', shortId: '3A76', deviceName: 'Generic HR 3A76', deviceType: 'generic_hr' },
-    { macAddress: 'C0:D2:14:3B:2B:87', shortId: '2B87', deviceName: 'Generic HR 2B87', deviceType: 'generic_hr' },
-    { macAddress: 'D0:E3:15:4C:1C:98', shortId: '1C98', deviceName: 'Polar OH1+ 1C98', deviceType: 'oh1_plus' },
-    { macAddress: 'D0:E3:15:4C:0D:A9', shortId: '0DA9', deviceName: 'Polar H10 0DA9', deviceType: 'chest_strap' },
-    { macAddress: 'E0:F4:16:5D:EE:BA', shortId: 'EEBA', deviceName: 'Polar OH1+ EEBA', deviceType: 'oh1_plus' },
-  ];
+  // ---- Devices (20 — MAC addresses match the simulator's makeMac() pattern) ----
+  // Simulator generates: A0:9E:1A:4F:00:01 through A0:9E:1A:4F:00:14
+  const devices = Array.from({ length: 20 }, (_, i) => {
+    const idx = i + 1;
+    const hex = idx.toString(16).padStart(4, '0').toUpperCase();
+    const mac = `A0:9E:1A:4F:${hex.slice(0, 2)}:${hex.slice(2, 4)}`;
+    const shortId = `${hex.slice(0, 2)}${hex.slice(2, 4)}`;
+    return {
+      macAddress: mac,
+      shortId,
+      deviceName: `Polar OH1 ${idx}`,
+      deviceType: 'oh1_plus' as const,
+    };
+  });
 
   const existingDevices = await prisma.device.count();
   if (existingDevices === 0) {
@@ -134,7 +150,7 @@ async function main() {
     console.log(`  Receivers already exist (${existingReceivers}), skipping`);
   }
 
-  // ---- Sample Class Template ----
+  // ---- Sample Class Template (all 20 participants) ----
   const existingClasses = await prisma.class.count();
   if (existingClasses === 0) {
     const sampleClass = await prisma.class.create({
@@ -145,8 +161,8 @@ async function main() {
       },
     });
 
-    // Add first 6 participants to class roster
-    const allParticipants = await prisma.participant.findMany({ take: 6 });
+    // Add all participants to class roster
+    const allParticipants = await prisma.participant.findMany();
     if (allParticipants.length > 0) {
       await prisma.classParticipant.createMany({
         data: allParticipants.map((p) => ({
@@ -158,6 +174,25 @@ async function main() {
     console.log(`  Created sample class with ${allParticipants.length} participants`);
   } else {
     console.log(`  Classes already exist (${existingClasses}), skipping`);
+  }
+
+  // ---- Auto-assign devices to participants (1:1 mapping) ----
+  const existingAssignments = await prisma.deviceAssignment.count();
+  if (existingAssignments === 0) {
+    const allParticipants = await prisma.participant.findMany({ orderBy: { createdAt: 'asc' } });
+    const allDevices = await prisma.device.findMany({ orderBy: { createdAt: 'asc' } });
+    const count = Math.min(allParticipants.length, allDevices.length);
+    for (let i = 0; i < count; i++) {
+      await prisma.deviceAssignment.create({
+        data: {
+          deviceId: allDevices[i].id,
+          participantId: allParticipants[i].id,
+        },
+      });
+    }
+    console.log(`  Auto-assigned ${count} devices to participants`);
+  } else {
+    console.log(`  Device assignments already exist (${existingAssignments}), skipping`);
   }
 
   console.log('Seed complete.');
