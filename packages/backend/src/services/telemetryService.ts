@@ -32,6 +32,9 @@ const currentTelemetryCache = new Map<string, InMemoryCT>();
 /** Track which receivers have been seen per device in a sliding window */
 const recentReceivers = new Map<string, Map<string, number>>(); // deviceMac -> (receiverHwId -> lastSeen timestamp)
 
+/** Track packet counts for packetRate computation */
+const packetCounts = new Map<string, number>(); // deviceMac -> packets in current window
+
 // ── Raw telemetry write buffer (already batched) ─────────────────────
 
 interface RawTelemetryInput {
@@ -68,6 +71,59 @@ async function flushWriteBuffer() {
 
 export function bufferRawTelemetry(input: RawTelemetryInput) {
   writeBuffer.push(input);
+}
+
+// ── WebSocket emission throttle (every 250ms) ────────────────────────
+// Instead of emitting 40-60 events/sec (one per UDP packet), batch into
+// 4 updates/sec to avoid overwhelming Socket.IO and React rendering.
+
+const wsEmitDirty = new Set<string>(); // deviceMacs needing WS emission
+let wsEmitTimer: NodeJS.Timeout | null = null;
+
+export function startWsEmitThrottle() {
+  wsEmitTimer = setInterval(flushWsEmissions, 250);
+}
+
+export function stopWsEmitThrottle() {
+  if (wsEmitTimer) clearInterval(wsEmitTimer);
+  flushWsEmissions();
+}
+
+function flushWsEmissions() {
+  if (wsEmitDirty.size === 0) return;
+  const dtos: CurrentTelemetryDTO[] = [];
+  for (const mac of wsEmitDirty) {
+    const dto = buildDTOFromMemory(mac);
+    if (dto) dtos.push(dto);
+  }
+  wsEmitDirty.clear();
+  if (dtos.length > 0) {
+    eventBus.emit('telemetry:batch', dtos);
+  }
+}
+
+// ── Packet rate computation (every 2s) ───────────────────────────────
+
+let packetRateTimer: NodeJS.Timeout | null = null;
+
+export function startPacketRateCalc() {
+  packetRateTimer = setInterval(computePacketRates, 2000);
+}
+
+export function stopPacketRateCalc() {
+  if (packetRateTimer) clearInterval(packetRateTimer);
+}
+
+function computePacketRates() {
+  for (const [mac, count] of packetCounts) {
+    const rate = count / 2; // packets per second (2s window)
+    const ct = currentTelemetryCache.get(mac);
+    if (ct) {
+      ct.packetRate = rate;
+      ct.dirty = true;
+    }
+  }
+  packetCounts.clear();
 }
 
 // ── Current telemetry DB flush (every 2s) ────────────────────────────
@@ -198,12 +254,14 @@ export async function processTelemetry(
   // 4. Update in-memory current telemetry (NO DB HIT)
   const existing = currentTelemetryCache.get(deviceMac);
   const isBetterRssi = !existing || rssi > (existing.smoothedRssi || -100);
+  const isSameReceiver = existing?.bestReceiverHwId === receiverHwId;
+  const shouldUpdate = isBetterRssi || isSameReceiver;
 
   currentTelemetryCache.set(deviceMac, {
     deviceId: device.id,
     deviceMac,
-    heartRate: isBetterRssi ? heartRate : (existing?.heartRate ?? heartRate),
-    smoothedRssi: isBetterRssi ? rssi : (existing?.smoothedRssi ?? rssi),
+    heartRate: shouldUpdate ? heartRate : (existing?.heartRate ?? heartRate),
+    smoothedRssi: shouldUpdate ? rssi : (existing?.smoothedRssi ?? rssi),
     bestReceiverHwId: isBetterRssi ? receiverHwId : (existing?.bestReceiverHwId ?? receiverHwId),
     receiverCount,
     packetRate: 0, // will be computed if needed
@@ -212,11 +270,11 @@ export async function processTelemetry(
     dirty: true,
   });
 
-  // 5. Emit WebSocket event from in-memory state (NO DB HIT)
-  const dto = buildDTOFromMemory(deviceMac);
-  if (dto) {
-    eventBus.emit('telemetry:updates', dto);
-  }
+  // 5. Track packet count for rate computation
+  packetCounts.set(deviceMac, (packetCounts.get(deviceMac) || 0) + 1);
+
+  // 6. Mark for throttled WebSocket emission (batched every 250ms)
+  wsEmitDirty.add(deviceMac);
 }
 
 // ── Build DTO from in-memory cache (no DB queries) ───────────────────

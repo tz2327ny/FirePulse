@@ -6,7 +6,7 @@ import { createApp } from './server.js';
 import { logger } from './lib/logger.js';
 import { setupSocketServer } from './websocket/socketServer.js';
 import { startUdpServer, stopUdpServer } from './udp/udpServer.js';
-import { startWriteBuffer, stopWriteBuffer, startCurrentTelemetryFlush, stopCurrentTelemetryFlush } from './services/telemetryService.js';
+import { startWriteBuffer, stopWriteBuffer, startCurrentTelemetryFlush, stopCurrentTelemetryFlush, startWsEmitThrottle, stopWsEmitThrottle, startPacketRateCalc, stopPacketRateCalc } from './services/telemetryService.js';
 import { startStaleSweeper, stopStaleSweeper } from './jobs/staleSweeper.js';
 import { startRawTelemetryPruner, stopRawTelemetryPruner } from './jobs/rawTelemetryPruner.js';
 import { startRollupGenerator, stopRollupGenerator } from './jobs/rollupGenerator.js';
@@ -30,6 +30,8 @@ export async function startBackend(): Promise<void> {
   // Background jobs
   startWriteBuffer();
   startCurrentTelemetryFlush();
+  startWsEmitThrottle();
+  startPacketRateCalc();
   startStaleSweeper();
   startRawTelemetryPruner();
   startRollupGenerator();
@@ -52,6 +54,8 @@ export async function stopBackend(): Promise<void> {
   stopUdpServer();
   stopWriteBuffer();
   stopCurrentTelemetryFlush();
+  stopWsEmitThrottle();
+  stopPacketRateCalc();
   stopStaleSweeper();
   stopRawTelemetryPruner();
   stopRollupGenerator();
