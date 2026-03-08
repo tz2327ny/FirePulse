@@ -4,6 +4,7 @@ import { Heart, ChevronUp, ChevronDown } from 'lucide-react';
 import type { CurrentTelemetryDTO } from '@heartbeat/shared';
 import { FreshnessState, computeFreshnessState } from '@heartbeat/shared';
 import { useFreshnessMap } from '../../hooks/useFreshness.js';
+import { getServerAdjustedNow } from '../../lib/clockSync.js';
 import { HeartRateCell } from './HeartRateCell.js';
 import { SignalBarsIndicator } from './SignalBarsIndicator.js';
 import { FreshnessBadge } from './FreshnessBadge.js';
@@ -59,7 +60,7 @@ export function TelemetryTable({ data, onStatusChange, onSendToRehab, inRehabPar
   };
 
   const getFreshness = (row: CurrentTelemetryDTO): FreshnessState =>
-    row.lastSeenAt ? computeFreshnessState(new Date(row.lastSeenAt)) : FreshnessState.OFFLINE;
+    row.lastSeenAt ? computeFreshnessState(new Date(row.lastSeenAt), getServerAdjustedNow()) : FreshnessState.OFFLINE;
 
   const sortedData = useMemo(() => {
     return [...data].sort((a, b) => {

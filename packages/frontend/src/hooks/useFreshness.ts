@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { computeFreshnessState, type FreshnessState } from '@heartbeat/shared';
+import { getServerAdjustedNow } from '../lib/clockSync.js';
 
 export function useFreshness(lastSeenAt: string | null | undefined): FreshnessState {
   const [state, setState] = useState<FreshnessState>(() =>
-    lastSeenAt ? computeFreshnessState(new Date(lastSeenAt)) : ('offline' as FreshnessState)
+    lastSeenAt ? computeFreshnessState(new Date(lastSeenAt), getServerAdjustedNow()) : ('offline' as FreshnessState)
   );
 
   useEffect(() => {
@@ -12,7 +13,7 @@ export function useFreshness(lastSeenAt: string | null | undefined): FreshnessSt
       return;
     }
 
-    const update = () => setState(computeFreshnessState(new Date(lastSeenAt)));
+    const update = () => setState(computeFreshnessState(new Date(lastSeenAt), getServerAdjustedNow()));
     update();
 
     const interval = setInterval(update, 1000);
@@ -29,7 +30,7 @@ export function useFreshnessMap(
 
   useEffect(() => {
     const update = () => {
-      const now = new Date();
+      const now = getServerAdjustedNow();
       const map = new Map<string, FreshnessState>();
       for (const item of items) {
         map.set(item.deviceMac, computeFreshnessState(new Date(item.lastSeenAt), now));

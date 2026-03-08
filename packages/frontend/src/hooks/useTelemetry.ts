@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSocket } from '../context/SocketContext.js';
 import { api } from '../api/client.js';
+import { updateClockOffset } from '../lib/clockSync.js';
 import type { CurrentTelemetryDTO } from '@heartbeat/shared';
 
 export function useTelemetry() {
@@ -12,6 +13,8 @@ export function useTelemetry() {
   useEffect(() => {
     api.get('/telemetry/current')
       .then((res) => {
+        // Sync clock offset from server timestamp
+        if (res.data.serverTime) updateClockOffset(res.data.serverTime);
         const map = new Map<string, CurrentTelemetryDTO>();
         for (const t of res.data.data) {
           map.set(t.deviceMac, t);
@@ -26,7 +29,9 @@ export function useTelemetry() {
   useEffect(() => {
     if (!socket) return;
 
-    const handler = (updates: CurrentTelemetryDTO[]) => {
+    const handler = (updates: CurrentTelemetryDTO[], serverTime?: string) => {
+      // Sync clock offset from server timestamp on every WS batch
+      if (serverTime) updateClockOffset(serverTime);
       setTelemetry((prev) => {
         const next = new Map(prev);
         for (const t of updates) {

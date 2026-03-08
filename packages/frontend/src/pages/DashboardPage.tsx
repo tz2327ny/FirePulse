@@ -4,6 +4,7 @@ import { useTelemetry } from '../hooks/useTelemetry.js';
 import { useAlerts } from '../hooks/useAlerts.js';
 import { useRehab } from '../hooks/useRehab.js';
 import { computeFreshnessState } from '@heartbeat/shared';
+import { getServerAdjustedNow } from '../lib/clockSync.js';
 import { TelemetryTable } from '../components/dashboard/TelemetryTable.js';
 import { CompanyTileView } from '../components/dashboard/CompanyTileView.js';
 import { ConfirmDialog } from '../components/common/ConfirmDialog.js';
@@ -55,7 +56,7 @@ export function DashboardPage() {
     if (!row.participantId) return false;
     if (inRehabParticipantIds.has(row.participantId)) return false;
     if (row.participantStatus !== 'present') return false;
-    const freshness = row.lastSeenAt ? computeFreshnessState(new Date(row.lastSeenAt)) : FreshnessState.OFFLINE;
+    const freshness = row.lastSeenAt ? computeFreshnessState(new Date(row.lastSeenAt), getServerAdjustedNow()) : FreshnessState.OFFLINE;
     return freshness === FreshnessState.LIVE || freshness === FreshnessState.DELAYED;
   }, [inRehabParticipantIds]);
 
@@ -64,7 +65,7 @@ export function DashboardPage() {
     return data.filter((row) => {
       if (row.participantId) return false;
       if (row.heartRate == null) return false;
-      const freshness = row.lastSeenAt ? computeFreshnessState(new Date(row.lastSeenAt)) : FreshnessState.OFFLINE;
+      const freshness = row.lastSeenAt ? computeFreshnessState(new Date(row.lastSeenAt), getServerAdjustedNow()) : FreshnessState.OFFLINE;
       return freshness === FreshnessState.LIVE || freshness === FreshnessState.DELAYED;
     });
   }, [data]);

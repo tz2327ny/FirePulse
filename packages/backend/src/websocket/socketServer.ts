@@ -47,8 +47,9 @@ export function setupSocketServer(httpServer: HttpServer): SocketServer {
 
   // Listen to EventBus channels and broadcast to Socket.IO clients
   // Batched telemetry updates (every 250ms from telemetryService)
+  // Include serverTime so clients can compute clock offset for freshness
   eventBus.on('telemetry:batch', (dtos: unknown[]) => {
-    io?.to('telemetry').emit('telemetry:update', dtos);
+    io?.to('telemetry').emit('telemetry:update', dtos, new Date().toISOString());
   });
 
   eventBus.on('receiver:heartbeat', (data) => {

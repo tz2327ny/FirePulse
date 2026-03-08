@@ -7,7 +7,7 @@ router.use(authMiddleware);
 
 router.get('/current', async (_req: Request, res: Response) => {
   const data = await telemetryService.getAllCurrentTelemetry();
-  res.json({ data });
+  res.json({ data, serverTime: new Date().toISOString() });
 });
 
 router.get('/current/:deviceMac', async (req: Request, res: Response) => {
