@@ -10,6 +10,7 @@
  *   --devices <n>      Number of simulated devices (default: 20)
  *   --receivers <n>    Number of simulated receivers (default: 4)
  *   --interval <ms>    Telemetry interval per device (default: 1000)
+ *   --ramp <seconds>   Stagger device startup over N seconds (default: 0 = all at once)
  */
 
 import dgram from 'node:dgram';
@@ -25,6 +26,7 @@ const PORT = parseInt(getArg('port', '41234'));
 const NUM_DEVICES = parseInt(getArg('devices', '20'));
 const NUM_RECEIVERS = parseInt(getArg('receivers', '4'));
 const INTERVAL_MS = parseInt(getArg('interval', '1000'));
+const RAMP_SECONDS = parseInt(getArg('ramp', '0'));
 
 const client = dgram.createSocket('udp4');
 
@@ -101,6 +103,7 @@ interface SimDevice {
   profile: HRProfile;
   driftOffset: number;
   breathOffset: number;
+  startDelay: number; // ms after sim start before this device comes online
 }
 
 interface SimReceiver {
@@ -108,11 +111,18 @@ interface SimReceiver {
   name: string;
 }
 
-// Create simulated devices with assigned profiles
+// Create simulated devices with assigned profiles and staggered start delays
+const rampMs = RAMP_SECONDS * 1000;
 const devices: SimDevice[] = [];
 for (let i = 0; i < NUM_DEVICES; i++) {
   const profile = assignProfile(i);
   const [lo, hi] = HR_PROFILES[profile].baseRange;
+
+  // Spread devices evenly across the ramp window with a small random jitter
+  const evenSpread = rampMs > 0 ? (i / NUM_DEVICES) * rampMs : 0;
+  const jitter = rampMs > 0 ? (Math.random() - 0.5) * (rampMs / NUM_DEVICES) : 0;
+  const startDelay = Math.max(0, Math.round(evenSpread + jitter));
+
   devices.push({
     mac: makeMac(i + 1),
     name: `Polar OH1 ${i + 1}`,
@@ -120,8 +130,12 @@ for (let i = 0; i < NUM_DEVICES; i++) {
     profile,
     driftOffset: Math.random() * 5000,
     breathOffset: Math.random() * 2000,
+    startDelay,
   });
 }
+
+// Sort by start delay so log output shows arrival order
+devices.sort((a, b) => a.startDelay - b.startDelay);
 
 // Create simulated receivers
 const receivers: SimReceiver[] = [];
@@ -140,6 +154,9 @@ function sendTelemetry() {
 
   for (let i = 0; i < devices.length; i++) {
     const device = devices[i];
+
+    // Skip devices that haven't come online yet (staggered ramp)
+    if (elapsed < device.startDelay) continue;
 
     // Each device seen by 1-3 random receivers
     const numReceivers = 1 + Math.floor(Math.random() * Math.min(NUM_RECEIVERS, 3));
@@ -189,14 +206,20 @@ for (const d of devices) {
 
 console.log(`[Simulator] Started: ${NUM_DEVICES} devices, ${NUM_RECEIVERS} receivers, ${INTERVAL_MS}ms interval`);
 console.log(`[Simulator] Sending to ${HOST}:${PORT}`);
+if (RAMP_SECONDS > 0) {
+  console.log(`[Simulator] Ramp: devices will come online over ${RAMP_SECONDS}s`);
+}
 console.log(`[Simulator] HR Profiles: ${Object.entries(profileCounts).map(([k, v]) => `${k}(${v})`).join(', ')}`);
 console.log('[Simulator] Press Ctrl+C to stop\n');
 
 // Log stats periodically
 setInterval(() => {
   const elapsed = Date.now() - startTime;
-  const sampleHRs = devices.slice(0, 5).map((d) => `${d.name.split(' ').pop()}:${simulateHR(d, elapsed)}`).join(' ');
-  console.log(`[Simulator] ${packetCount} packets | Sample HRs: ${sampleHRs}`);
+  const activeCount = devices.filter((d) => elapsed >= d.startDelay).length;
+  const sampleHRs = devices.filter((d) => elapsed >= d.startDelay).slice(0, 5)
+    .map((d) => `${d.name.split(' ').pop()}:${simulateHR(d, elapsed)}`).join(' ');
+  const rampStatus = activeCount < NUM_DEVICES ? ` (${activeCount}/${NUM_DEVICES} online)` : '';
+  console.log(`[Simulator] ${packetCount} packets${rampStatus} | Sample HRs: ${sampleHRs}`);
 }, 5000);
 
 // Send telemetry at interval

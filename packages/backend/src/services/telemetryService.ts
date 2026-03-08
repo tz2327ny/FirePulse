@@ -35,6 +35,69 @@ const recentReceivers = new Map<string, Map<string, number>>(); // deviceMac -> 
 /** Track packet counts for packetRate computation */
 const packetCounts = new Map<string, number>(); // deviceMac -> packets in current window
 
+/** Cached device assignments: deviceId -> participant + session info */
+interface CachedAssignment {
+  participantId: string;
+  firstName: string | null;
+  lastName: string | null;
+  company: string | null;
+  participantStatus: string | null;
+  sessionParticipantId: string | null;
+}
+const assignmentCache = new Map<string, CachedAssignment>(); // deviceId -> assignment
+let assignmentCacheTimer: NodeJS.Timeout | null = null;
+
+/** Refresh the assignment cache from DB (runs every 5s) */
+async function refreshAssignmentCache() {
+  try {
+    // Get all active assignments
+    const assignments = await prisma.deviceAssignment.findMany({
+      where: { unassignedAt: null },
+      include: { participant: true },
+    });
+
+    // Find active session for participant status lookup
+    const activeSession = await prisma.session.findFirst({
+      where: { state: { in: ['standby', 'active', 'paused'] } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    let sessionParticipants: Map<string, { id: string; status: string }> = new Map();
+    if (activeSession) {
+      const sps = await prisma.sessionParticipant.findMany({
+        where: { sessionId: activeSession.id },
+        select: { id: true, participantId: true, status: true },
+      });
+      sessionParticipants = new Map(sps.map((sp) => [sp.participantId, { id: sp.id, status: sp.status }]));
+    }
+
+    // Rebuild cache
+    assignmentCache.clear();
+    for (const a of assignments) {
+      const sp = sessionParticipants.get(a.participantId);
+      assignmentCache.set(a.deviceId, {
+        participantId: a.participantId,
+        firstName: a.participant.firstName,
+        lastName: a.participant.lastName,
+        company: a.participant.company,
+        participantStatus: sp?.status || null,
+        sessionParticipantId: sp?.id || null,
+      });
+    }
+  } catch (err) {
+    logger.error({ err }, 'Failed to refresh assignment cache');
+  }
+}
+
+export function startAssignmentCache() {
+  refreshAssignmentCache(); // initial load
+  assignmentCacheTimer = setInterval(refreshAssignmentCache, 5000);
+}
+
+export function stopAssignmentCache() {
+  if (assignmentCacheTimer) clearInterval(assignmentCacheTimer);
+}
+
 // ── Raw telemetry write buffer (already batched) ─────────────────────
 
 interface RawTelemetryInput {
@@ -287,6 +350,9 @@ function buildDTOFromMemory(deviceMac: string): CurrentTelemetryDTO | null {
   const freshness = computeFreshnessState(ct.lastSeenAt);
   const signalBars = computeSignalBars(ct.smoothedRssi || -100, ct.packetRate, ct.receiverCount);
 
+  // Look up cached assignment for this device
+  const assignment = assignmentCache.get(device.id);
+
   return {
     deviceMac: ct.deviceMac,
     shortId: device.shortId,
@@ -300,12 +366,12 @@ function buildDTOFromMemory(deviceMac: string): CurrentTelemetryDTO | null {
     lastSeenAt: ct.lastSeenAt.toISOString(),
     freshnessState: freshness,
     signalBars,
-    participantId: null,
-    participantFirstName: null,
-    participantLastName: null,
-    participantCompany: null,
-    participantStatus: null,
-    sessionParticipantId: null,
+    participantId: assignment?.participantId || null,
+    participantFirstName: assignment?.firstName || null,
+    participantLastName: assignment?.lastName || null,
+    participantCompany: assignment?.company || null,
+    participantStatus: assignment?.participantStatus || null,
+    sessionParticipantId: assignment?.sessionParticipantId || null,
   };
 }
 

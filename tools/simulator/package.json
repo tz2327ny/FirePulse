@@ -6,7 +6,8 @@
   "scripts": {
     "start": "tsx simulate.ts",
     "sim:5": "tsx simulate.ts --devices 5 --receivers 2",
-    "sim:25": "tsx simulate.ts --devices 25 --receivers 3"
+    "sim:25": "tsx simulate.ts --devices 25 --receivers 3",
+    "sim:ramp": "tsx simulate.ts --devices 20 --receivers 4 --ramp 60"
   },
   "devDependencies": {
     "tsx": "^4.19.0"
