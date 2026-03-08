@@ -132,6 +132,33 @@ elif command -v nmcli &> /dev/null; then
   nmcli con modify firepulse-hotspot wifi.mode ap wifi-sec.key-mgmt wpa-psk wifi-sec.psk "firepulse123"
 fi
 
+# Always unblock wifi and set up interface (needed for both dhcpcd and NM)
+rfkill unblock wifi 2>/dev/null || true
+ip link set ${HOTSPOT_INTERFACE} up 2>/dev/null || true
+ip addr flush dev ${HOTSPOT_INTERFACE} 2>/dev/null || true
+ip addr add 10.0.50.1/24 dev ${HOTSPOT_INTERFACE} 2>/dev/null || true
+
+# Create boot-time service to ensure rfkill unblock + static IP before hostapd
+cat > /etc/systemd/system/firepulse-hotspot.service <<EOF
+[Unit]
+Description=FirePulse Hotspot Network Setup
+Before=hostapd.service dnsmasq.service
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/rfkill unblock wifi
+ExecStart=/sbin/ip link set ${HOTSPOT_INTERFACE} up
+ExecStart=/sbin/ip addr flush dev ${HOTSPOT_INTERFACE}
+ExecStart=/sbin/ip addr add 10.0.50.1/24 dev ${HOTSPOT_INTERFACE}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable firepulse-hotspot
+
 # Install hostapd config
 sed "s/interface=wlan0/interface=${HOTSPOT_INTERFACE}/" \
   "$DEPLOY_DIR/hostapd.conf" > /etc/hostapd/hostapd.conf

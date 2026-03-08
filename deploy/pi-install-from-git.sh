@@ -127,10 +127,46 @@ if [ ! -f "$DATA_DIR/firepulse.db" ]; then
   if [ -f "$APPLIANCE_DIR/data/template.db" ]; then
     echo "  Copying template database..."
     cp "$APPLIANCE_DIR/data/template.db" "$DATA_DIR/firepulse.db"
+  else
+    echo "  No template DB found, creating from schema..."
+    cd "$APP_DIR/packages/backend"
+    DATABASE_URL="file:$DATA_DIR/firepulse.db" npx prisma db push --skip-generate --accept-data-loss 2>&1 | tail -3
   fi
 fi
 
 chown -R firepulse:firepulse "$APP_DIR"
+
+# Seed database with default users and settings if empty
+echo "  Seeding database..."
+cd "$APP_DIR"
+sudo -u firepulse DATABASE_URL="file:$DATA_DIR/firepulse.db" node -e "
+const{PrismaClient}=require('@prisma/client');const bcrypt=require('bcrypt');const p=new PrismaClient();
+(async()=>{
+const count=await p.user.count();
+if(count>0){console.log('  Users exist, skipping seed');await p.\$disconnect();return;}
+const pw=await bcrypt.hash('admin123',10);
+await p.user.upsert({where:{username:'admin'},update:{},create:{username:'admin',passwordHash:pw,displayName:'System Admin',role:'admin'}});
+const pw2=await bcrypt.hash('instructor123',10);
+await p.user.upsert({where:{username:'instructor1'},update:{},create:{username:'instructor1',passwordHash:pw2,displayName:'Lead Instructor',role:'instructor'}});
+const pw3=await bcrypt.hash('medical123',10);
+await p.user.upsert({where:{username:'medical1'},update:{},create:{username:'medical1',passwordHash:pw3,displayName:'EMS Medic',role:'medical'}});
+const s=[
+{key:'hr_warning_threshold',value:'160',description:'HR warning threshold'},
+{key:'hr_alarm_threshold',value:'180',description:'HR alarm threshold'},
+{key:'freshness_live_ms',value:'5000',description:'Live threshold ms'},
+{key:'freshness_delayed_ms',value:'15000',description:'Delayed threshold ms'},
+{key:'freshness_stale_ms',value:'30000',description:'Stale threshold ms'},
+{key:'alert_sound_enabled',value:'true',description:'Enable alert sounds'},
+{key:'alert_cooldown_ms',value:'60000',description:'Alert cooldown ms'},
+{key:'heartbeat_timeout_ms',value:'30000',description:'Receiver heartbeat timeout ms'},
+{key:'merge_window_ms',value:'3000',description:'Telemetry merge window ms'},
+{key:'rollup_interval_ms',value:'5000',description:'Rollup interval ms'},
+];
+for(const x of s){await p.setting.upsert({where:{key:x.key},update:{},create:x});}
+console.log('  Seed complete: 3 users, 10 settings');
+await p.\$disconnect();
+})().catch(e=>{console.error('Seed error:',e.message);process.exit(1)});
+" || echo "  WARNING: Seed failed (non-fatal)"
 
 # Install systemd service
 echo "  Installing systemd service..."
@@ -173,14 +209,16 @@ unmanaged-devices=interface-name:${HOTSPOT_INTERFACE}
 EOF
   systemctl restart NetworkManager 2>/dev/null || true
   sleep 2
-  # Set up interface manually
-  rfkill unblock wifi 2>/dev/null || true
-  ip link set ${HOTSPOT_INTERFACE} up 2>/dev/null || true
-  ip addr flush dev ${HOTSPOT_INTERFACE} 2>/dev/null || true
-  ip addr add 10.0.50.1/24 dev ${HOTSPOT_INTERFACE} 2>/dev/null || true
+fi
 
-  # Create boot-time service for interface setup
-  cat > /etc/systemd/system/firepulse-hotspot.service <<EOF
+# Always unblock wifi and set up interface (needed for both dhcpcd and NM)
+rfkill unblock wifi 2>/dev/null || true
+ip link set ${HOTSPOT_INTERFACE} up 2>/dev/null || true
+ip addr flush dev ${HOTSPOT_INTERFACE} 2>/dev/null || true
+ip addr add 10.0.50.1/24 dev ${HOTSPOT_INTERFACE} 2>/dev/null || true
+
+# Create boot-time service to ensure rfkill unblock + static IP before hostapd
+cat > /etc/systemd/system/firepulse-hotspot.service <<EOF
 [Unit]
 Description=FirePulse Hotspot Network Setup
 Before=hostapd.service dnsmasq.service
@@ -197,9 +235,8 @@ ExecStart=/sbin/ip addr add 10.0.50.1/24 dev ${HOTSPOT_INTERFACE}
 [Install]
 WantedBy=multi-user.target
 EOF
-  systemctl daemon-reload
-  systemctl enable firepulse-hotspot
-fi
+systemctl daemon-reload
+systemctl enable firepulse-hotspot
 
 # Install hostapd config
 sed "s/interface=wlan0/interface=${HOTSPOT_INTERFACE}/" \
