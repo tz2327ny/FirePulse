@@ -22,7 +22,7 @@ resources/template.db
 # Environment
 .env
 .env.local
-.env.production
+# Note: .env.production is tracked (no secrets, just empty VITE_ vars)
 
 # IDE
 .vscode/
