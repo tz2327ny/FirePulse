@@ -36,7 +36,7 @@ echo ""
 echo "[1/10] Installing system packages..."
 apt-get update -qq
 apt-get install -y -qq \
-  git curl hostapd dnsmasq avahi-daemon \
+  git curl hostapd dnsmasq avahi-daemon chrony \
   build-essential python3 > /dev/null
 
 # ── Step 2: Install Node.js 20 LTS ──────────────────────────
@@ -276,8 +276,19 @@ if command -v ufw &> /dev/null; then
   ufw allow 41234/udp comment "FirePulse Telemetry" 2>/dev/null
   ufw allow 67/udp comment "DHCP" 2>/dev/null
   ufw allow 53 comment "DNS" 2>/dev/null
+  ufw allow 123/udp comment "NTP" 2>/dev/null
   ufw --force enable 2>/dev/null
 fi
+
+# ── Configure chrony as local NTP server ─────────────────
+echo "  Configuring chrony NTP server for ESP32 time sync..."
+if ! grep -q "allow 10.0.50.0/24" /etc/chrony/chrony.conf 2>/dev/null; then
+  echo "" >> /etc/chrony/chrony.conf
+  echo "# Allow ESP32 receivers on hotspot network to sync time" >> /etc/chrony/chrony.conf
+  echo "allow 10.0.50.0/24" >> /etc/chrony/chrony.conf
+fi
+systemctl enable chrony
+systemctl restart chrony
 
 # ── Done ────────────────────────────────────────────────────
 echo ""
