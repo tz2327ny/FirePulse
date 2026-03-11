@@ -348,7 +348,7 @@ function buildDTOFromMemory(deviceMac: string): CurrentTelemetryDTO | null {
   if (!ct || !device) return null;
 
   const freshness = computeFreshnessState(ct.lastSeenAt);
-  const signalBars = computeSignalBars(ct.smoothedRssi || -100, ct.packetRate, ct.receiverCount);
+  const signalBars = computeSignalBars(ct.smoothedRssi || -100);
 
   // Look up cached assignment for this device
   const assignment = assignmentCache.get(device.id);
@@ -420,7 +420,7 @@ export async function buildCurrentTelemetryDTO(
   }
 
   const freshness = computeFreshnessState(ct.lastSeenAt);
-  const signalBars = computeSignalBars(ct.smoothedRssi || -100, ct.packetRate, ct.receiverCount);
+  const signalBars = computeSignalBars(ct.smoothedRssi || -100);
 
   return {
     deviceMac: ct.deviceMac,
@@ -444,7 +444,17 @@ export async function buildCurrentTelemetryDTO(
   };
 }
 
-export async function getAllCurrentTelemetry(): Promise<CurrentTelemetryDTO[]> {
+export async function getAllCurrentTelemetry(sessionId?: string): Promise<CurrentTelemetryDTO[]> {
+  // If filtering by session, get participant IDs for that session
+  let sessionParticipantIds: Set<string> | null = null;
+  if (sessionId) {
+    const sps = await prisma.sessionParticipant.findMany({
+      where: { sessionId },
+      select: { participantId: true },
+    });
+    sessionParticipantIds = new Set(sps.map((sp) => sp.participantId));
+  }
+
   // If we have in-memory data, serve from there (much faster)
   if (currentTelemetryCache.size > 0) {
     const results: CurrentTelemetryDTO[] = [];
@@ -452,7 +462,12 @@ export async function getAllCurrentTelemetry(): Promise<CurrentTelemetryDTO[]> {
       const device = deviceCache.get(mac);
       if (device?.isIgnored || device?.isArchived) continue;
       const dto = buildDTOFromMemory(mac);
-      if (dto) results.push(dto);
+      if (dto) {
+        // Filter by session participants if sessionId provided
+        if (sessionParticipantIds && dto.participantId && !sessionParticipantIds.has(dto.participantId)) continue;
+        if (sessionParticipantIds && !dto.participantId) continue;
+        results.push(dto);
+      }
     }
     return results;
   }
@@ -466,7 +481,11 @@ export async function getAllCurrentTelemetry(): Promise<CurrentTelemetryDTO[]> {
   for (const ct of allCt) {
     if (ct.device.isIgnored || ct.device.isArchived) continue;
     const dto = await buildCurrentTelemetryDTO(ct.deviceMac);
-    if (dto) results.push(dto);
+    if (dto) {
+      if (sessionParticipantIds && dto.participantId && !sessionParticipantIds.has(dto.participantId)) continue;
+      if (sessionParticipantIds && !dto.participantId) continue;
+      results.push(dto);
+    }
   }
   return results;
 }

@@ -11,27 +11,49 @@ import { ConfirmDialog } from '../components/common/ConfirmDialog.js';
 import { api } from '../api/client.js';
 import type { SessionDTO, CurrentTelemetryDTO } from '@heartbeat/shared';
 import { SessionState, FreshnessState } from '@heartbeat/shared';
-import { AlertTriangle, Bell, Activity, Heart, Pause, Square, Play, Timer, Volume2, VolumeX, Table2, LayoutGrid } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { AlertTriangle, Bell, Activity, Heart, Pause, Square, Play, Timer, Volume2, VolumeX, Table2, LayoutGrid, EyeOff, Eye } from 'lucide-react';
 import { useElapsedTimer } from '../hooks/useElapsedTimer.js';
 import { useAudioAlert } from '../hooks/useAudioAlert.js';
 import { useCanWrite } from '../hooks/useCanWrite.js';
+import { cn } from '../utils/cn.js';
 
 export function DashboardPage() {
   const navigate = useNavigate();
-  const { telemetryArray, isLoading } = useTelemetry();
   const [currentSession, setCurrentSession] = useState<SessionDTO | null>(null);
+  const [sessionLoaded, setSessionLoaded] = useState(false);
+  const { telemetryArray, isLoading } = useTelemetry(currentSession?.id);
   const { activeAlerts, acknowledge } = useAlerts(currentSession?.id);
   const { createVisit, inRehabParticipantIds, rehabDispositions } = useRehab(currentSession?.id);
   const [sendingAll, setSendingAll] = useState(false);
   const [sendAllConfirm, setSendAllConfirm] = useState<{ participantIds: string[]; names: string[] } | null>(null);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
-  const { isEnabled: isAudioEnabled, toggleEnabled: toggleAudio } = useAudioAlert();
+  const { isEnabled: isAudioEnabled, toggleEnabled: toggleAudio, playTestTone, audioReady, ensureAudioContext } = useAudioAlert();
   const [audioOn, setAudioOn] = useState(() => localStorage.getItem('heartbeat_audio_alerts') !== 'false');
   const [viewMode, setViewMode] = useState<'table' | 'tiles'>(() =>
     (localStorage.getItem('heartbeat_dashboard_view') as 'table' | 'tiles') || 'table'
   );
+  const [showDismissed, setShowDismissed] = useState(false);
   const { canWriteSessions, canSendToRehab } = useCanWrite();
   const data = telemetryArray();
+
+  // Phase 7: Hide offline dismissed participants
+  const { visibleData, dismissedCount } = useMemo(() => {
+    if (showDismissed) return { visibleData: data, dismissedCount: 0 };
+    const visible: CurrentTelemetryDTO[] = [];
+    let dismissed = 0;
+    for (const row of data) {
+      const isDismissedStatus = row.participantStatus === 'left_early' || row.participantStatus === 'removed';
+      const freshness = row.lastSeenAt ? computeFreshnessState(new Date(row.lastSeenAt), getServerAdjustedNow()) : FreshnessState.OFFLINE;
+      const isStaleOrOffline = freshness === FreshnessState.STALE || freshness === FreshnessState.OFFLINE;
+      if (isDismissedStatus && isStaleOrOffline) {
+        dismissed++;
+      } else {
+        visible.push(row);
+      }
+    }
+    return { visibleData: visible, dismissedCount: dismissed };
+  }, [data, showDismissed]);
 
   const handleViewToggle = useCallback((mode: 'table' | 'tiles') => {
     setViewMode(mode);
@@ -47,7 +69,7 @@ export function DashboardPage() {
   useEffect(() => {
     api.get('/sessions/current').then((res) => {
       setCurrentSession(res.data.data);
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => setSessionLoaded(true));
   }, []);
 
   // ---- Helpers ----
@@ -157,8 +179,24 @@ export function DashboardPage() {
         <div className="flex items-center gap-3 text-sm">
           <div className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
             <Activity className="h-4 w-4" />
-            <span>{data.length} devices</span>
+            <span>{visibleData.length} devices</span>
           </div>
+
+          {/* Show Dismissed Toggle */}
+          {dismissedCount > 0 && (
+            <button
+              onClick={() => setShowDismissed((v) => !v)}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors',
+                showDismissed
+                  ? 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200'
+                  : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+              )}
+            >
+              {showDismissed ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+              {showDismissed ? 'Hide' : 'Show'} Dismissed ({dismissedCount})
+            </button>
+          )}
 
           {/* View Mode Toggle */}
           <div className="inline-flex rounded-lg border border-gray-200 dark:border-gray-600 p-0.5">
@@ -188,12 +226,21 @@ export function DashboardPage() {
 
           {/* Audio Alert Toggle */}
           <button
-            onClick={() => { toggleAudio(); setAudioOn(!audioOn); }}
+            onClick={() => { const newState = toggleAudio(); setAudioOn(newState); if (newState) ensureAudioContext(); }}
             className={`btn-ghost p-1.5 ${audioOn ? 'text-gray-600 dark:text-gray-300' : 'text-gray-300 dark:text-gray-600'}`}
             title={audioOn ? 'Mute alerts' : 'Unmute alerts'}
           >
             {audioOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
           </button>
+          {audioOn && (
+            <button
+              onClick={playTestTone}
+              className="btn-ghost px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              title="Test audio"
+            >
+              Test
+            </button>
+          )}
 
           {/* Session Control Buttons (admin + instructor only) */}
           {canWriteSessions && currentSession && currentSession.state === SessionState.STANDBY && (
@@ -302,30 +349,47 @@ export function DashboardPage() {
         </div>
       )}
 
-      {/* Telemetry View */}
-      <div className="card p-0 overflow-hidden">
-        {isLoading ? (
-          <div className="flex items-center justify-center py-16 text-gray-400 dark:text-gray-500">
-            Loading telemetry...
-          </div>
-        ) : viewMode === 'tiles' ? (
-          <CompanyTileView
-            data={data}
-            onStatusChange={canWriteSessions && currentSession ? handleStatusChange : undefined}
-            onSendToRehab={canSendToRehab && currentSession ? handleSendToRehab : undefined}
-            inRehabParticipantIds={inRehabParticipantIds}
-            rehabDispositions={rehabDispositions}
-          />
-        ) : (
-          <TelemetryTable
-            data={data}
-            onStatusChange={canWriteSessions && currentSession ? handleStatusChange : undefined}
-            onSendToRehab={canSendToRehab && currentSession ? handleSendToRehab : undefined}
-            inRehabParticipantIds={inRehabParticipantIds}
-            rehabDispositions={rehabDispositions}
-          />
-        )}
-      </div>
+      {/* Session-gated: empty state when no active session */}
+      {sessionLoaded && !currentSession ? (
+        <div className="card flex flex-col items-center justify-center py-20 text-center">
+          <Play className="h-12 w-12 text-gray-300 dark:text-gray-600 mb-4" />
+          <h2 className="text-xl font-semibold text-gray-600 dark:text-gray-400">No Active Session</h2>
+          <p className="mt-2 text-sm text-gray-400 dark:text-gray-500 max-w-sm">
+            Create or start a session to begin monitoring heart rates. Load a class roster or start a standalone session.
+          </p>
+          <Link
+            to="/sessions"
+            className="btn-primary mt-4 inline-flex items-center gap-1.5"
+          >
+            <Play className="h-4 w-4" /> Go to Sessions
+          </Link>
+        </div>
+      ) : (
+        /* Telemetry View */
+        <div className="card p-0 overflow-hidden">
+          {isLoading ? (
+            <div className="flex items-center justify-center py-16 text-gray-400 dark:text-gray-500">
+              Loading telemetry...
+            </div>
+          ) : viewMode === 'tiles' ? (
+            <CompanyTileView
+              data={visibleData}
+              onStatusChange={canWriteSessions && currentSession ? handleStatusChange : undefined}
+              onSendToRehab={canSendToRehab && currentSession ? handleSendToRehab : undefined}
+              inRehabParticipantIds={inRehabParticipantIds}
+              rehabDispositions={rehabDispositions}
+            />
+          ) : (
+            <TelemetryTable
+              data={visibleData}
+              onStatusChange={canWriteSessions && currentSession ? handleStatusChange : undefined}
+              onSendToRehab={canSendToRehab && currentSession ? handleSendToRehab : undefined}
+              inRehabParticipantIds={inRehabParticipantIds}
+              rehabDispositions={rehabDispositions}
+            />
+          )}
+        </div>
+      )}
 
       {/* Send All to Rehab Confirmation Dialog */}
       {sendAllConfirm && (

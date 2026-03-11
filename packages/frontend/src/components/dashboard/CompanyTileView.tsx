@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Heart } from 'lucide-react';
+import { Heart, AlertTriangle } from 'lucide-react';
 import type { CurrentTelemetryDTO } from '@heartbeat/shared';
 import { FreshnessState, computeFreshnessState } from '@heartbeat/shared';
 import { useFreshnessMap } from '../../hooks/useFreshness.js';
@@ -100,6 +100,7 @@ export function CompanyTileView({ data, inRehabParticipantIds, rehabDispositions
               {group.rows.map((row) => {
                 const freshness = freshnessMap.get(row.deviceMac) || FreshnessState.OFFLINE;
                 const isStaleOrOffline = freshness === FreshnessState.STALE || freshness === FreshnessState.OFFLINE;
+                const isUnexpectedlyOffline = isStaleOrOffline && row.participantStatus === 'present';
                 const isInRehab = row.participantId ? inRehabParticipantIds?.has(row.participantId) : false;
                 const firstName = row.participantFirstName || '';
                 const lastName = row.participantLastName || '';
@@ -113,7 +114,7 @@ export function CompanyTileView({ data, inRehabParticipantIds, rehabDispositions
                     className={cn(
                       'relative flex flex-col rounded-lg border-l-4 bg-gray-50 dark:bg-gray-700/50 px-3 py-2.5 transition-colors',
                       getFreshnessBorderColor(freshness),
-                      isStaleOrOffline && 'opacity-50'
+                      isStaleOrOffline && !isUnexpectedlyOffline && 'opacity-50'
                     )}
                   >
                     {/* Name + Status dot row */}
@@ -142,9 +143,13 @@ export function CompanyTileView({ data, inRehabParticipantIds, rehabDispositions
                           {displayName}
                         </span>
                       )}
+                      {/* Warning: unexpectedly offline */}
+                      {isUnexpectedlyOffline && (
+                        <span title="Device offline — participant still present"><AlertTriangle className="h-3 w-3 flex-shrink-0 text-amber-500 animate-pulse" /></span>
+                      )}
                       {/* Rehab heart icon */}
                       {isInRehab && (
-                        <Heart className="h-3 w-3 flex-shrink-0 text-orange-500" />
+                        <span title="In Rehab"><Heart className="h-3 w-3 flex-shrink-0 text-orange-500" /></span>
                       )}
                     </div>
 

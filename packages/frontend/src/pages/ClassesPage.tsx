@@ -1,12 +1,21 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '../api/client.js';
 import type { ParticipantDTO } from '@heartbeat/shared';
-import { BookOpen, Plus, Pencil, Archive, Users, UserPlus, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { BookOpen, Plus, Pencil, Archive, Users, UserPlus, X, ChevronDown, ChevronUp, Link2, Unlink } from 'lucide-react';
 import { useCanWrite } from '../hooks/useCanWrite.js';
+
+interface DeviceInfo {
+  id: string;
+  shortId: string;
+  deviceName: string | null;
+  macAddress: string;
+}
 
 interface ClassParticipantItem {
   id: string;
   participantId: string;
+  deviceId: string | null;
+  device: DeviceInfo | null;
   participant: {
     id: string;
     firstName: string;
@@ -120,7 +129,38 @@ export function ClassesPage() {
     fetchClasses();
   };
 
+  // Device assignment
+  const [allDevices, setAllDevices] = useState<DeviceInfo[]>([]);
+  const [assigningCpId, setAssigningCpId] = useState<string | null>(null);
+  const [selectedDeviceId, setSelectedDeviceId] = useState('');
+
+  const fetchDevices = useCallback(async () => {
+    const res = await api.get('/devices');
+    setAllDevices(res.data.data);
+  }, []);
+
+  useEffect(() => { fetchDevices(); }, [fetchDevices]);
+
+  const handleAssignDevice = async (classId: string, participantId: string) => {
+    if (!selectedDeviceId) return;
+    await api.post(`/classes/${classId}/participants/${participantId}/device`, { deviceId: selectedDeviceId });
+    setAssigningCpId(null);
+    setSelectedDeviceId('');
+    await fetchClassDetail(classId);
+  };
+
+  const handleUnassignDevice = async (classId: string, participantId: string) => {
+    await api.delete(`/classes/${classId}/participants/${participantId}/device`);
+    await fetchClassDetail(classId);
+  };
+
   const activeClasses = classes.filter((c) => !c.isArchived);
+
+  // Devices already assigned in the current class
+  const assignedDeviceIds = new Set(
+    classDetail?.classParticipants.filter((cp) => cp.deviceId).map((cp) => cp.deviceId!) || []
+  );
+  const availableDevices = allDevices.filter((d) => !assignedDeviceIds.has(d.id));
 
   // Participants not already in the expanded class
   const availableParticipants = classDetail
@@ -226,9 +266,63 @@ export function ClassesPage() {
                   <div className="divide-y divide-gray-50 dark:divide-gray-700 rounded-lg border border-gray-100 dark:border-gray-700">
                     {classDetail.classParticipants.map((cp) => (
                       <div key={cp.id} className="flex items-center justify-between px-3 py-2 text-sm">
-                        <div>
-                          <span className="font-medium dark:text-gray-200">{cp.participant.firstName} {cp.participant.lastName}</span>
-                          <span className="ml-2 text-gray-500 dark:text-gray-400">{cp.participant.company}</span>
+                        <div className="flex items-center gap-3">
+                          <div>
+                            <span className="font-medium dark:text-gray-200">{cp.participant.firstName} {cp.participant.lastName}</span>
+                            <span className="ml-2 text-gray-500 dark:text-gray-400">{cp.participant.company}</span>
+                          </div>
+                          {/* Device assignment */}
+                          {assigningCpId === cp.id ? (
+                            <div className="flex items-center gap-1">
+                              <select
+                                className="input py-0.5 text-xs"
+                                value={selectedDeviceId}
+                                onChange={(e) => setSelectedDeviceId(e.target.value)}
+                              >
+                                <option value="">Select device...</option>
+                                {availableDevices.map((d) => (
+                                  <option key={d.id} value={d.id}>
+                                    {d.shortId}{d.deviceName ? ` — ${d.deviceName}` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                onClick={() => handleAssignDevice(c.id, cp.participantId)}
+                                className="btn-primary px-2 py-0.5 text-xs"
+                                disabled={!selectedDeviceId}
+                              >
+                                Assign
+                              </button>
+                              <button
+                                onClick={() => { setAssigningCpId(null); setSelectedDeviceId(''); }}
+                                className="btn-ghost p-0.5 text-xs"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ) : cp.device ? (
+                            <div className="flex items-center gap-1">
+                              <span className="rounded bg-blue-50 dark:bg-blue-900/30 px-1.5 py-0.5 text-xs font-mono text-blue-700 dark:text-blue-300">
+                                {cp.device.shortId}
+                              </span>
+                              {canWriteClasses && (
+                                <button
+                                  onClick={() => handleUnassignDevice(c.id, cp.participantId)}
+                                  className="rounded p-0.5 text-gray-400 hover:text-red-500"
+                                  title="Unassign device"
+                                >
+                                  <Unlink className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
+                          ) : canWriteClasses ? (
+                            <button
+                              onClick={() => setAssigningCpId(cp.id)}
+                              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-gray-300"
+                            >
+                              <Link2 className="h-3 w-3" /> Assign Device
+                            </button>
+                          ) : null}
                         </div>
                         {canWriteClasses && (
                           <button

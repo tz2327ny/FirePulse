@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Heart, ChevronUp, ChevronDown } from 'lucide-react';
+import { Heart, ChevronUp, ChevronDown, AlertTriangle } from 'lucide-react';
 import type { CurrentTelemetryDTO } from '@heartbeat/shared';
 import { FreshnessState, computeFreshnessState } from '@heartbeat/shared';
 import { useFreshnessMap } from '../../hooks/useFreshness.js';
@@ -161,21 +161,27 @@ export function TelemetryTable({ data, onStatusChange, onSendToRehab, inRehabPar
           {sortedData.map((row) => {
             const freshness = freshnessMap.get(row.deviceMac) || FreshnessState.OFFLINE;
             const isStaleOrOffline = freshness === FreshnessState.STALE || freshness === FreshnessState.OFFLINE;
+            const isUnexpectedlyOffline = isStaleOrOffline && row.participantStatus === 'present';
 
             return (
               <tr
                 key={row.deviceMac}
                 className={cn(
                   'transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50',
-                  isStaleOrOffline && 'opacity-50'
+                  isStaleOrOffline && !isUnexpectedlyOffline && 'opacity-50'
                 )}
               >
                 <td className="whitespace-nowrap px-4 py-3 font-medium dark:text-gray-200">
-                  {row.participantFirstName && row.participantId
+                  <div className="flex items-center gap-1.5">
+                    {isUnexpectedlyOffline && (
+                      <span title="Device offline — participant still present"><AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-500 animate-pulse" /></span>
+                    )}
+                    {row.participantFirstName && row.participantId
                     ? <Link to={`/participants/${row.participantId}`} className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline">
                         {row.participantFirstName} {row.participantLastName}
                       </Link>
                     : <span className="text-gray-400 dark:text-gray-500 italic">Unassigned</span>}
+                  </div>
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-gray-600 dark:text-gray-400">
                   {row.participantCompany || '—'}

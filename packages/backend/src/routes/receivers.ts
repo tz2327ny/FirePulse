@@ -33,4 +33,9 @@ router.put('/:id', requireRole('admin', 'instructor'), validate(updateSchema), a
   res.json({ data: receiver });
 });
 
+router.delete('/:id', requireRole('admin'), async (req: Request, res: Response) => {
+  await receiverService.archive(req.params.id);
+  res.json({ data: { success: true } });
+});
+
 export default router;

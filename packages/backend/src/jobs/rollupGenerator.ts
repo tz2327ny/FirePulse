@@ -48,7 +48,7 @@ async function generateRollups() {
       if (!sp) continue;
 
       const freshness = computeFreshnessState(ct.lastSeenAt, now);
-      const signalScore = computeSignalBars(ct.smoothedRssi || -100, ct.packetRate, ct.receiverCount);
+      const signalScore = computeSignalBars(ct.smoothedRssi || -100);
 
       rollups.push({
         sessionId: activeSession.id,

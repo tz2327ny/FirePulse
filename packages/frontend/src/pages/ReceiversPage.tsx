@@ -2,9 +2,11 @@ import { useEffect, useState, useCallback } from 'react';
 import { useSocket } from '../context/SocketContext.js';
 import { api } from '../api/client.js';
 import type { ReceiverStatusDTO } from '@heartbeat/shared';
-import { Radio, Wifi, WifiOff, Pencil, Check, X } from 'lucide-react';
+import { Radio, Wifi, WifiOff, Pencil, Check, X, Trash2 } from 'lucide-react';
+import { computeWifiSignalBars } from '@heartbeat/shared';
 import { useCanWrite } from '../hooks/useCanWrite.js';
 import { timeAgo } from '../utils/formatTime.js';
+import { SignalBarsIndicator } from '../components/dashboard/SignalBarsIndicator.js';
 
 export function ReceiversPage() {
   const { canWriteReceivers } = useCanWrite();
@@ -47,6 +49,12 @@ export function ReceiversPage() {
     }
   };
 
+  const handleDelete = async (id: string, name: string) => {
+    if (!confirm(`Delete receiver "${name}"? This will archive it.`)) return;
+    await api.delete(`/receivers/${id}`);
+    fetchReceivers();
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -77,7 +85,10 @@ export function ReceiversPage() {
                   <button onClick={() => setEditId(null)} className="btn-ghost p-1"><X className="h-4 w-4" /></button>
                 </div>
               ) : (
-                <button onClick={() => startEdit(r)} className="btn-ghost p-1"><Pencil className="h-3 w-3" /></button>
+                <div className="flex gap-1">
+                  <button onClick={() => startEdit(r)} className="btn-ghost p-1"><Pencil className="h-3 w-3" /></button>
+                  <button onClick={() => handleDelete(r.id, r.name)} className="btn-ghost p-1 text-red-500 hover:text-red-700"><Trash2 className="h-3 w-3" /></button>
+                </div>
               ))}
             </div>
 
@@ -113,9 +124,12 @@ export function ReceiversPage() {
                 </div>
               )}
               {r.wifiRssi !== null && (
-                <div className="flex justify-between">
-                  <span>WiFi RSSI</span>
-                  <span>{r.wifiRssi} dBm</span>
+                <div className="flex items-center justify-between">
+                  <span>WiFi Signal</span>
+                  <div className="flex items-center gap-1.5" title={`${r.wifiRssi} dBm`}>
+                    <SignalBarsIndicator bars={computeWifiSignalBars(r.wifiRssi)} />
+                    <span className="text-gray-400">{r.wifiRssi} dBm</span>
+                  </div>
                 </div>
               )}
               <div className="flex justify-between">

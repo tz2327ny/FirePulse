@@ -13,7 +13,7 @@ export async function getById(id: string) {
     where: { id },
     include: {
       classParticipants: {
-        include: { participant: true },
+        include: { participant: true, device: true },
       },
     },
   });
@@ -57,5 +57,21 @@ export async function addParticipants(classId: string, participantIds: string[])
 export async function removeParticipant(classId: string, participantId: string) {
   return prisma.classParticipant.delete({
     where: { classId_participantId: { classId, participantId } },
+  });
+}
+
+export async function assignDevice(classId: string, participantId: string, deviceId: string) {
+  return prisma.classParticipant.update({
+    where: { classId_participantId: { classId, participantId } },
+    data: { deviceId },
+    include: { participant: true, device: true },
+  });
+}
+
+export async function unassignDevice(classId: string, participantId: string) {
+  return prisma.classParticipant.update({
+    where: { classId_participantId: { classId, participantId } },
+    data: { deviceId: null },
+    include: { participant: true, device: true },
   });
 }

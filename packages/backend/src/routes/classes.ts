@@ -26,6 +26,10 @@ const addParticipantsSchema = z.object({
   participantIds: z.array(z.string().uuid()).min(1),
 });
 
+const assignDeviceSchema = z.object({
+  deviceId: z.string().uuid(),
+});
+
 router.get('/', async (req: Request, res: Response) => {
   const includeArchived = req.query.archived === 'true';
   const classes = await classService.list(includeArchived);
@@ -75,6 +79,17 @@ router.post('/:id/participants', requireRole('admin', 'instructor'), validate(ad
 router.delete('/:classId/participants/:participantId', requireRole('admin', 'instructor'), async (req: Request, res: Response) => {
   await classService.removeParticipant(req.params.classId, req.params.participantId);
   res.json({ data: { success: true } });
+});
+
+// Device assignment per class-participant
+router.post('/:classId/participants/:participantId/device', requireRole('admin', 'instructor'), validate(assignDeviceSchema), async (req: Request, res: Response) => {
+  const result = await classService.assignDevice(req.params.classId, req.params.participantId, req.body.deviceId);
+  res.json({ data: result });
+});
+
+router.delete('/:classId/participants/:participantId/device', requireRole('admin', 'instructor'), async (req: Request, res: Response) => {
+  const result = await classService.unassignDevice(req.params.classId, req.params.participantId);
+  res.json({ data: result });
 });
 
 export default router;

@@ -87,6 +87,13 @@ export async function markOffline(receiverId: string) {
   logger.info({ receiverHwId: receiver.receiverHwId }, 'Receiver went offline');
 }
 
+export async function archive(id: string) {
+  return prisma.receiver.update({
+    where: { id },
+    data: { isArchived: true, isOnline: false },
+  });
+}
+
 export async function updateLastSeen(receiverHwId: string) {
   await prisma.receiver.update({
     where: { receiverHwId },

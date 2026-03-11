@@ -1,23 +1,28 @@
 import {
   RSSI_EXCELLENT,
   RSSI_GOOD,
-  PACKET_RATE_GOOD,
-  RECEIVER_DIVERSITY_GOOD,
+  RSSI_FAIR,
+  RSSI_POOR,
+  WIFI_RSSI_EXCELLENT,
+  WIFI_RSSI_GOOD,
+  WIFI_RSSI_FAIR,
+  WIFI_RSSI_POOR,
 } from '../constants/signal.js';
 
-export function computeSignalBars(
-  rssi: number,
-  packetRate: number,
-  receiverCount: number
-): number {
-  // RSSI component: 0-2 points
-  const rssiScore = rssi > RSSI_EXCELLENT ? 2 : rssi > RSSI_GOOD ? 1 : 0;
+/** Compute 0–4 signal bars from BLE RSSI only */
+export function computeSignalBars(rssi: number): number {
+  if (rssi > RSSI_EXCELLENT) return 4;
+  if (rssi > RSSI_GOOD) return 3;
+  if (rssi > RSSI_FAIR) return 2;
+  if (rssi > RSSI_POOR) return 1;
+  return 0;
+}
 
-  // Packet rate component: 0-1 point
-  const rateScore = packetRate >= PACKET_RATE_GOOD ? 1 : 0;
-
-  // Receiver diversity component: 0-1 point
-  const diversityScore = receiverCount >= RECEIVER_DIVERSITY_GOOD ? 1 : 0;
-
-  return rssiScore + rateScore + diversityScore; // 0-4 bars
+/** Compute 0–4 signal bars from WiFi RSSI */
+export function computeWifiSignalBars(rssi: number): number {
+  if (rssi > WIFI_RSSI_EXCELLENT) return 4;
+  if (rssi > WIFI_RSSI_GOOD) return 3;
+  if (rssi > WIFI_RSSI_FAIR) return 2;
+  if (rssi > WIFI_RSSI_POOR) return 1;
+  return 0;
 }

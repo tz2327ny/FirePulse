@@ -55,7 +55,7 @@ export async function create(data: { name: string; classId?: string }) {
     },
   });
 
-  // If created from a class, copy participants
+  // If created from a class, copy participants and auto-assign devices
   if (data.classId) {
     const classParticipants = await prisma.classParticipant.findMany({
       where: { classId: data.classId },
@@ -68,6 +68,25 @@ export async function create(data: { name: string; classId?: string }) {
           status: 'present',
         })),
       });
+
+      // Unassign all current device assignments
+      await prisma.deviceAssignment.updateMany({
+        where: { unassignedAt: null },
+        data: { unassignedAt: new Date() },
+      });
+
+      // Create new device assignments from class roster
+      const withDevices = classParticipants.filter((cp) => cp.deviceId);
+      if (withDevices.length > 0) {
+        await prisma.deviceAssignment.createMany({
+          data: withDevices.map((cp) => ({
+            deviceId: cp.deviceId!,
+            participantId: cp.participantId,
+            sessionId: session.id,
+            assignedAt: new Date(),
+          })),
+        });
+      }
     }
   }
 

@@ -44,7 +44,7 @@ export function useAlerts(sessionId?: string) {
       socket.off('alert:new', handleNew);
       socket.off('alert:updated', handleUpdated);
     };
-  }, [socket]);
+  }, [socket, playAlarm, playWarning]);
 
   const acknowledge = useCallback(async (alertId: string) => {
     await api.post(`/alerts/${alertId}/ack`);

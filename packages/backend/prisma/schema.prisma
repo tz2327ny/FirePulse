@@ -95,12 +95,14 @@ model ClassParticipant {
   id                     String   @id @default(uuid())
   classId                String   @map("class_id")
   participantId          String   @map("participant_id")
+  deviceId               String?  @map("device_id")
   defaultCompanyOverride String?  @map("default_company_override")
   createdAt              DateTime @default(now()) @map("created_at")
 
   // Relations
   class       Class       @relation(fields: [classId], references: [id])
   participant Participant @relation(fields: [participantId], references: [id])
+  device      Device?     @relation(fields: [deviceId], references: [id])
 
   @@unique([classId, participantId])
   @@map("class_participants")
@@ -193,6 +195,7 @@ model Device {
   telemetryRollups   SessionTelemetryRollup[]
   currentTelemetry   CurrentTelemetry?
   sessionEvents      SessionEvent[]
+  classParticipants  ClassParticipant[]
 
   @@map("devices")
 }

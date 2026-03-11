@@ -5,8 +5,9 @@ import * as telemetryService from '../services/telemetryService.js';
 const router = Router();
 router.use(authMiddleware);
 
-router.get('/current', async (_req: Request, res: Response) => {
-  const data = await telemetryService.getAllCurrentTelemetry();
+router.get('/current', async (req: Request, res: Response) => {
+  const sessionId = req.query.sessionId as string | undefined;
+  const data = await telemetryService.getAllCurrentTelemetry(sessionId);
   res.json({ data, serverTime: new Date().toISOString() });
 });
 
