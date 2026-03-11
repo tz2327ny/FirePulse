@@ -20,9 +20,9 @@ deploy/firepulse-appliance/
 resources/template.db
 
 # Environment
-.env
 .env.local
 # Note: .env.production is tracked (no secrets, just empty VITE_ vars)
+# Note: packages/backend/.env is tracked (local-only app, no sensitive secrets)
 
 # IDE
 .vscode/
