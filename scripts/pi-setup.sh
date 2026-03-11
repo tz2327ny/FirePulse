@@ -2,66 +2,96 @@
 set -euo pipefail
 
 # ============================================================
-# FirePulse Pi Dev Setup
-# Clones repo, installs deps, sets up DB, builds, and restarts.
-# Usage: curl/wget this script and run, OR:
-#   cd ~ && rm -rf FirePulse && bash FirePulse-setup.sh
+# FirePulse Pi Setup
+# Clones repo, installs deps, sets up DB, builds, and deploys
+# directly to /opt/firepulse where the systemd service runs.
+#
+# Usage:
+#   bash pi-setup.sh            # fresh install
+#   bash pi-setup.sh --update   # pull latest + rebuild
 # ============================================================
 
 REPO="https://github.com/tz2327ny/FirePulse.git"
-APP_DIR="$HOME/FirePulse"
+BUILD_DIR="/tmp/firepulse-build"
+APP_DIR="/opt/firepulse"
+DATA_DIR="/opt/firepulse/data"
 
-echo "========================================"
-echo " FirePulse Dev Setup"
-echo "========================================"
-
-# Step 1: Clone
-if [ -d "$APP_DIR" ]; then
-  echo "[1/6] Removing existing FirePulse directory..."
-  rm -rf "$APP_DIR"
+MODE="install"
+if [ "${1:-}" = "--update" ]; then
+  MODE="update"
 fi
-echo "[1/6] Cloning repository..."
-git clone "$REPO" "$APP_DIR"
 
-# Step 2: Install dependencies
-echo "[2/6] Installing npm dependencies (this takes 5-10 min on Pi)..."
-cd "$APP_DIR"
-npm install
+echo "========================================"
+echo " FirePulse Pi Setup (${MODE})"
+echo "========================================"
 
-# Step 3: Create .env if missing
-echo "[3/6] Setting up environment..."
-ENV_FILE="$APP_DIR/packages/backend/.env"
-if [ ! -f "$ENV_FILE" ]; then
-  echo "  Creating packages/backend/.env..."
-  cat > "$ENV_FILE" <<EOF
-DATABASE_URL=file:./data/firepulse.db
-JWT_SECRET=dev-secret-change-in-production
+if [ "$MODE" = "update" ]; then
+  # ── Update mode: pull latest into /opt/firepulse and rebuild in-place ──
+  echo "[1/4] Pulling latest code..."
+  cd "$APP_DIR"
+  sudo -u firepulse git pull
+
+  echo "[2/4] Installing dependencies..."
+  sudo -u firepulse npm install
+
+  echo "[3/4] Running database migrations..."
+  cd "$APP_DIR/packages/backend"
+  sudo -u firepulse npx prisma db push
+
+  echo "[4/4] Building..."
+  cd "$APP_DIR"
+  sudo -u firepulse npm run build
+
+else
+  # ── Fresh install: clone to temp dir, build, deploy to /opt ──
+
+  # Step 1: Clone
+  echo "[1/7] Cloning repository..."
+  rm -rf "$BUILD_DIR"
+  git clone "$REPO" "$BUILD_DIR"
+
+  # Step 2: Install dependencies
+  echo "[2/7] Installing npm dependencies (5-10 min on Pi)..."
+  cd "$BUILD_DIR"
+  npm install
+
+  # Step 3: Create .env
+  echo "[3/7] Setting up environment..."
+  cat > "$BUILD_DIR/packages/backend/.env" <<EOF
+DATABASE_URL=file:${DATA_DIR}/firepulse.db
+JWT_SECRET=firepulse-appliance-local
 EOF
-else
-  echo "  .env already exists, skipping."
+
+  # Step 4: Generate Prisma client
+  echo "[4/7] Generating Prisma client..."
+  cd "$BUILD_DIR/packages/backend"
+  npx prisma generate
+
+  # Step 5: Build
+  echo "[5/7] Building all packages..."
+  cd "$BUILD_DIR"
+  npm run build
+
+  # Step 6: Deploy to /opt/firepulse
+  echo "[6/7] Deploying to ${APP_DIR}..."
+  sudo mkdir -p "$DATA_DIR"
+  sudo rsync -a --delete --exclude='data/' "$BUILD_DIR/" "$APP_DIR/"
+  sudo chown -R firepulse:firepulse "$APP_DIR"
+
+  # Step 7: Set up database
+  echo "[7/7] Setting up database..."
+  cd "$APP_DIR/packages/backend"
+  sudo -u firepulse npx prisma db push
+  sudo -u firepulse npx prisma db seed
+
+  # Cleanup temp build dir
+  rm -rf "$BUILD_DIR"
 fi
 
-# Step 4: Database setup
-echo "[4/6] Setting up database..."
-cd "$APP_DIR/packages/backend"
-mkdir -p data
-npx prisma db push
-npx prisma db seed
-
-# Step 5: Build
-echo "[5/6] Building all packages..."
-cd "$APP_DIR"
-npm run build
-
-# Step 6: Restart service
-echo "[6/6] Restarting firepulse service..."
-if systemctl is-active --quiet firepulse 2>/dev/null; then
-  sudo systemctl restart firepulse
-  echo "  Service restarted."
-else
-  echo "  firepulse service not found — skipping restart."
-  echo "  Start manually: node packages/backend/dist/server.js"
-fi
+# Restart service
+echo ""
+echo "Restarting firepulse service..."
+sudo systemctl restart firepulse
 
 echo ""
 echo "========================================"
