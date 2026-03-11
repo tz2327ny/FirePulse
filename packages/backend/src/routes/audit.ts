@@ -1,13 +1,14 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth.js';
 import { requireRole } from '../middleware/requireRole.js';
+import { asyncHandler } from '../lib/asyncHandler.js';
 import * as auditService from '../services/auditService.js';
 
 const router = Router();
 router.use(authMiddleware);
 router.use(requireRole('admin'));
 
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', asyncHandler(async (req: Request, res: Response) => {
   const filter: auditService.AuditListFilter = {};
 
   if (req.query.entityType) filter.entityType = req.query.entityType as string;
@@ -19,6 +20,6 @@ router.get('/', async (req: Request, res: Response) => {
 
   const result = await auditService.list(filter);
   res.json(result);
-});
+}));
 
 export default router;

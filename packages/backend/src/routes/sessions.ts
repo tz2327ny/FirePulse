@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { validate } from '../middleware/validate.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { requireRole } from '../middleware/requireRole.js';
+import { asyncHandler } from '../lib/asyncHandler.js';
 import * as sessionService from '../services/sessionService.js';
 import * as sessionEventService from '../services/sessionEventService.js';
 import * as auditService from '../services/auditService.js';
@@ -25,7 +26,7 @@ const statusSchema = z.object({
   note: z.string().optional(),
 });
 
-router.get('/', async (_req: Request, res: Response) => {
+router.get('/', asyncHandler(async (_req: Request, res: Response) => {
   const sessions = await sessionService.list();
   const data = await Promise.all(
     sessions.map(async (s) => ({
@@ -39,9 +40,9 @@ router.get('/', async (_req: Request, res: Response) => {
     }))
   );
   res.json({ data });
-});
+}));
 
-router.get('/current', async (_req: Request, res: Response) => {
+router.get('/current', asyncHandler(async (_req: Request, res: Response) => {
   const session = await sessionService.getCurrent();
   if (!session) {
     res.json({ data: null });
@@ -58,9 +59,9 @@ router.get('/current', async (_req: Request, res: Response) => {
       _count: undefined,
     },
   });
-});
+}));
 
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', asyncHandler(async (req: Request, res: Response) => {
   const session = await sessionService.getById(req.params.id);
   if (!session) {
     res.status(404).json({ status: 404, message: 'Session not found' });
@@ -72,15 +73,15 @@ router.get('/:id', async (req: Request, res: Response) => {
       timing: await sessionService.computeSessionTiming(session),
     },
   });
-});
+}));
 
-router.post('/', requireRole('admin', 'instructor'), validate(createSchema), async (req: Request, res: Response) => {
+router.post('/', requireRole('admin', 'instructor'), validate(createSchema), asyncHandler(async (req: Request, res: Response) => {
   const session = await sessionService.create(req.body);
   auditService.log('session.created', 'session', session?.id ?? null, req.user!.userId, { name: req.body.name });
   res.status(201).json({ data: session });
-});
+}));
 
-router.post('/:id/state', requireRole('admin', 'instructor'), validate(stateSchema), async (req: Request, res: Response) => {
+router.post('/:id/state', requireRole('admin', 'instructor'), validate(stateSchema), asyncHandler(async (req: Request, res: Response) => {
   try {
     const session = await sessionService.changeState(req.params.id, req.body.state, req.user!.userId);
     auditService.log('session.state_changed', 'session', req.params.id, req.user!.userId, {
@@ -90,21 +91,21 @@ router.post('/:id/state', requireRole('admin', 'instructor'), validate(stateSche
   } catch (err: any) {
     res.status(400).json({ status: 400, message: err.message });
   }
-});
+}));
 
-router.get('/:id/events', async (req: Request, res: Response) => {
+router.get('/:id/events', asyncHandler(async (req: Request, res: Response) => {
   const events = await sessionEventService.listBySession(req.params.id);
   res.json({ data: events });
-});
+}));
 
 // Session participants
-router.post('/:id/participants', requireRole('admin', 'instructor'), async (req: Request, res: Response) => {
+router.post('/:id/participants', requireRole('admin', 'instructor'), asyncHandler(async (req: Request, res: Response) => {
   const { participantId } = req.body;
   const sp = await sessionService.addParticipant(req.params.id, participantId);
   res.status(201).json({ data: sp });
-});
+}));
 
-router.patch('/participants/:spId/status', requireRole('admin', 'instructor'), validate(statusSchema), async (req: Request, res: Response) => {
+router.patch('/participants/:spId/status', requireRole('admin', 'instructor'), validate(statusSchema), asyncHandler(async (req: Request, res: Response) => {
   try {
     const sp = await sessionService.updateParticipantStatus(
       req.params.spId,
@@ -116,10 +117,10 @@ router.patch('/participants/:spId/status', requireRole('admin', 'instructor'), v
   } catch (err: any) {
     res.status(400).json({ status: 400, message: err.message });
   }
-});
+}));
 
 // CSV export
-router.get('/:id/export.csv', async (req: Request, res: Response) => {
+router.get('/:id/export.csv', asyncHandler(async (req: Request, res: Response) => {
   const session = await sessionService.getById(req.params.id);
   if (!session) {
     res.status(404).json({ status: 404, message: 'Session not found' });
@@ -211,6 +212,6 @@ router.get('/:id/export.csv', async (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename="session-${session.name}.csv"`);
   res.send(lines.join('\n'));
-});
+}));
 
 export default router;

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { validate } from '../middleware/validate.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { requireRole } from '../middleware/requireRole.js';
+import { asyncHandler } from '../lib/asyncHandler.js';
 import * as deviceService from '../services/deviceService.js';
 import * as auditService from '../services/auditService.js';
 
@@ -14,7 +15,7 @@ const assignSchema = z.object({
   sessionId: z.string().uuid().optional(),
 });
 
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', asyncHandler(async (req: Request, res: Response) => {
   const includeArchived = req.query.archived === 'true';
   const devices = await deviceService.list(includeArchived);
   res.json({
@@ -33,9 +34,9 @@ router.get('/', async (req: Request, res: Response) => {
       createdAt: d.createdAt,
     })),
   });
-});
+}));
 
-router.get('/discovery', async (_req: Request, res: Response) => {
+router.get('/discovery', asyncHandler(async (_req: Request, res: Response) => {
   // Return all devices with current telemetry for discovery view
   const { prisma } = await import('../lib/prisma.js');
   const devices = await prisma.device.findMany({
@@ -78,18 +79,18 @@ router.get('/discovery', async (_req: Request, res: Response) => {
       };
     }),
   });
-});
+}));
 
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', asyncHandler(async (req: Request, res: Response) => {
   const device = await deviceService.getById(req.params.id);
   if (!device) {
     res.status(404).json({ status: 404, message: 'Device not found' });
     return;
   }
   res.json({ data: device });
-});
+}));
 
-router.post('/:id/assign', requireRole('admin', 'instructor'), validate(assignSchema), async (req: Request, res: Response) => {
+router.post('/:id/assign', requireRole('admin', 'instructor'), validate(assignSchema), asyncHandler(async (req: Request, res: Response) => {
   const assignment = await deviceService.assign(
     req.params.id,
     req.body.participantId,
@@ -100,24 +101,24 @@ router.post('/:id/assign', requireRole('admin', 'instructor'), validate(assignSc
     participantId: req.body.participantId,
   });
   res.json({ data: assignment });
-});
+}));
 
-router.post('/:id/unassign', requireRole('admin', 'instructor'), async (req: Request, res: Response) => {
+router.post('/:id/unassign', requireRole('admin', 'instructor'), asyncHandler(async (req: Request, res: Response) => {
   await deviceService.unassign(req.params.id);
   auditService.log('device.unassigned', 'device', req.params.id, req.user!.userId);
   res.json({ data: { success: true } });
-});
+}));
 
-router.post('/:id/ignore', requireRole('admin', 'instructor'), async (req: Request, res: Response) => {
+router.post('/:id/ignore', requireRole('admin', 'instructor'), asyncHandler(async (req: Request, res: Response) => {
   const ignored = req.body.ignored !== false;
   await deviceService.setIgnored(req.params.id, ignored);
   auditService.log('device.ignored', 'device', req.params.id, req.user!.userId, { ignored });
   res.json({ data: { success: true } });
-});
+}));
 
-router.delete('/:id', requireRole('admin', 'instructor'), async (req: Request, res: Response) => {
+router.delete('/:id', requireRole('admin', 'instructor'), asyncHandler(async (req: Request, res: Response) => {
   await deviceService.archive(req.params.id);
   res.json({ data: { success: true } });
-});
+}));
 
 export default router;

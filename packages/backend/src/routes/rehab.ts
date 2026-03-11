@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { validate } from '../middleware/validate.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { requireRole } from '../middleware/requireRole.js';
+import { asyncHandler } from '../lib/asyncHandler.js';
 import * as rehabService from '../services/rehabService.js';
 import {
   RehabCheckpointType,
@@ -40,7 +41,7 @@ const closeVisitSchema = z.object({
 // ---- Routes ----
 
 // List visits for a session (admin + medical only)
-router.get('/', requireRole('admin', 'medical'), async (req: Request, res: Response) => {
+router.get('/', requireRole('admin', 'medical'), asyncHandler(async (req: Request, res: Response) => {
   const sessionId = req.query.sessionId as string | undefined;
   const activeOnly = req.query.activeOnly === 'true';
 
@@ -51,10 +52,10 @@ router.get('/', requireRole('admin', 'medical'), async (req: Request, res: Respo
 
   const visits = await rehabService.listBySession(sessionId, activeOnly);
   res.json({ data: visits });
-});
+}));
 
 // Get active participant IDs for a session (all roles — used by dashboard badges)
-router.get('/active-participants', async (req: Request, res: Response) => {
+router.get('/active-participants', asyncHandler(async (req: Request, res: Response) => {
   const sessionId = req.query.sessionId as string | undefined;
   if (!sessionId) {
     res.status(400).json({ message: 'sessionId query parameter is required' });
@@ -62,20 +63,20 @@ router.get('/active-participants', async (req: Request, res: Response) => {
   }
   const ids = await rehabService.getActiveParticipantIds(sessionId);
   res.json({ data: ids });
-});
+}));
 
 // Get a single visit (admin + medical only)
-router.get('/:id', requireRole('admin', 'medical'), async (req: Request, res: Response) => {
+router.get('/:id', requireRole('admin', 'medical'), asyncHandler(async (req: Request, res: Response) => {
   const visit = await rehabService.getById(req.params.id);
   if (!visit) {
     res.status(404).json({ message: 'Rehab visit not found' });
     return;
   }
   res.json({ data: visit });
-});
+}));
 
 // Create a new rehab visit
-router.post('/', validate(createVisitSchema), async (req: Request, res: Response) => {
+router.post('/', validate(createVisitSchema), asyncHandler(async (req: Request, res: Response) => {
   try {
     const visit = await rehabService.createVisit(
       req.body.sessionId,
@@ -90,10 +91,10 @@ router.post('/', validate(createVisitSchema), async (req: Request, res: Response
     }
     throw err;
   }
-});
+}));
 
 // Add a checkpoint to a visit (admin + medical only)
-router.post('/:id/checkpoints', requireRole('admin', 'medical'), validate(createCheckpointSchema), async (req: Request, res: Response) => {
+router.post('/:id/checkpoints', requireRole('admin', 'medical'), validate(createCheckpointSchema), asyncHandler(async (req: Request, res: Response) => {
   try {
     const visit = await rehabService.addCheckpoint(
       req.params.id,
@@ -112,10 +113,10 @@ router.post('/:id/checkpoints', requireRole('admin', 'medical'), validate(create
     }
     throw err;
   }
-});
+}));
 
 // Cancel/delete a visit (admin + medical only)
-router.delete('/:id', requireRole('admin', 'medical'), async (req: Request, res: Response) => {
+router.delete('/:id', requireRole('admin', 'medical'), asyncHandler(async (req: Request, res: Response) => {
   try {
     const result = await rehabService.cancelVisit(req.params.id, req.user!.userId);
     res.json({ data: result });
@@ -130,10 +131,10 @@ router.delete('/:id', requireRole('admin', 'medical'), async (req: Request, res:
     }
     throw err;
   }
-});
+}));
 
 // Close a visit (admin + medical only)
-router.post('/:id/close', requireRole('admin', 'medical'), validate(closeVisitSchema), async (req: Request, res: Response) => {
+router.post('/:id/close', requireRole('admin', 'medical'), validate(closeVisitSchema), asyncHandler(async (req: Request, res: Response) => {
   try {
     const visit = await rehabService.closeVisit(
       req.params.id,
@@ -152,10 +153,10 @@ router.post('/:id/close', requireRole('admin', 'medical'), validate(closeVisitSc
     }
     throw err;
   }
-});
+}));
 
 // Re-evaluate a closed visit (admin + medical only)
-router.post('/:id/re-evaluate', requireRole('admin', 'medical'), async (req: Request, res: Response) => {
+router.post('/:id/re-evaluate', requireRole('admin', 'medical'), asyncHandler(async (req: Request, res: Response) => {
   try {
     const visit = await rehabService.reEvaluateVisit(
       req.params.id,
@@ -177,6 +178,6 @@ router.post('/:id/re-evaluate', requireRole('admin', 'medical'), async (req: Req
     }
     throw err;
   }
-});
+}));
 
 export default router;

@@ -5,6 +5,7 @@ const { Prisma } = pkg;
 import { validate } from '../middleware/validate.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { requireRole } from '../middleware/requireRole.js';
+import { asyncHandler } from '../lib/asyncHandler.js';
 import * as userService from '../services/userService.js';
 import * as auditService from '../services/auditService.js';
 import { UserRole } from '@heartbeat/shared';
@@ -26,22 +27,22 @@ const updateSchema = z.object({
   password: z.string().min(6).max(100).optional(),
 });
 
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', asyncHandler(async (req: Request, res: Response) => {
   const activeOnly = req.query.active === 'true';
   const users = await userService.list(activeOnly);
   res.json({ data: users });
-});
+}));
 
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', asyncHandler(async (req: Request, res: Response) => {
   const user = await userService.getById(req.params.id);
   if (!user) {
     res.status(404).json({ status: 404, message: 'User not found' });
     return;
   }
   res.json({ data: user });
-});
+}));
 
-router.post('/', validate(createSchema), async (req: Request, res: Response) => {
+router.post('/', validate(createSchema), asyncHandler(async (req: Request, res: Response) => {
   try {
     const user = await userService.create(req.body);
     auditService.log('user.created', 'user', user.id, req.user!.userId, {
@@ -56,26 +57,26 @@ router.post('/', validate(createSchema), async (req: Request, res: Response) => 
     }
     throw err;
   }
-});
+}));
 
-router.put('/:id', validate(updateSchema), async (req: Request, res: Response) => {
+router.put('/:id', validate(updateSchema), asyncHandler(async (req: Request, res: Response) => {
   const user = await userService.update(req.params.id, req.body);
   auditService.log('user.updated', 'user', user.id, req.user!.userId, {
     fields: Object.keys(req.body).filter((k) => k !== 'password'),
     passwordChanged: !!req.body.password,
   });
   res.json({ data: user });
-});
+}));
 
-router.post('/:id/reactivate', async (req: Request, res: Response) => {
+router.post('/:id/reactivate', asyncHandler(async (req: Request, res: Response) => {
   const user = await userService.reactivate(req.params.id);
   auditService.log('user.reactivated', 'user', user.id, req.user!.userId, {
     username: user.username,
   });
   res.json({ data: user });
-});
+}));
 
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', asyncHandler(async (req: Request, res: Response) => {
   if (req.params.id === req.user!.userId) {
     res.status(400).json({ status: 400, message: 'Cannot deactivate your own account' });
     return;
@@ -85,6 +86,6 @@ router.delete('/:id', async (req: Request, res: Response) => {
     username: user.username,
   });
   res.json({ data: { success: true } });
-});
+}));
 
 export default router;

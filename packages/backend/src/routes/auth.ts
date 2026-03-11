@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { validate } from '../middleware/validate.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { asyncHandler } from '../lib/asyncHandler.js';
 import * as authService from '../services/authService.js';
 import { prisma } from '../lib/prisma.js';
 
@@ -12,7 +13,7 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
-router.post('/login', validate(loginSchema), async (req: Request, res: Response) => {
+router.post('/login', validate(loginSchema), asyncHandler(async (req: Request, res: Response) => {
   const { username, password } = req.body;
   const result = await authService.login(username, password);
   if (!result) {
@@ -20,14 +21,14 @@ router.post('/login', validate(loginSchema), async (req: Request, res: Response)
     return;
   }
   res.json({ data: result });
-});
+}));
 
 router.post('/refresh', authMiddleware, (req: Request, res: Response) => {
   const token = authService.refreshToken(req.user!);
   res.json({ data: { token } });
 });
 
-router.get('/me', authMiddleware, async (req: Request, res: Response) => {
+router.get('/me', authMiddleware, asyncHandler(async (req: Request, res: Response) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user!.userId },
     select: { id: true, username: true, displayName: true, role: true },
@@ -37,6 +38,6 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
     return;
   }
   res.json({ data: user });
-});
+}));
 
 export default router;
