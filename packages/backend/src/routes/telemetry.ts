@@ -6,8 +6,7 @@ const router = Router();
 router.use(authMiddleware);
 
 router.get('/current', async (req: Request, res: Response) => {
-  const sessionId = req.query.sessionId as string | undefined;
-  const data = await telemetryService.getAllCurrentTelemetry(sessionId);
+  const data = await telemetryService.getAllCurrentTelemetry();
   res.json({ data, serverTime: new Date().toISOString() });
 });
 

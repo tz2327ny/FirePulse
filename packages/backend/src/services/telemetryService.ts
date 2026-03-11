@@ -444,17 +444,7 @@ export async function buildCurrentTelemetryDTO(
   };
 }
 
-export async function getAllCurrentTelemetry(sessionId?: string): Promise<CurrentTelemetryDTO[]> {
-  // If filtering by session, get participant IDs for that session
-  let sessionParticipantIds: Set<string> | null = null;
-  if (sessionId) {
-    const sps = await prisma.sessionParticipant.findMany({
-      where: { sessionId },
-      select: { participantId: true },
-    });
-    sessionParticipantIds = new Set(sps.map((sp) => sp.participantId));
-  }
-
+export async function getAllCurrentTelemetry(): Promise<CurrentTelemetryDTO[]> {
   // If we have in-memory data, serve from there (much faster)
   if (currentTelemetryCache.size > 0) {
     const results: CurrentTelemetryDTO[] = [];
@@ -462,12 +452,7 @@ export async function getAllCurrentTelemetry(sessionId?: string): Promise<Curren
       const device = deviceCache.get(mac);
       if (device?.isIgnored || device?.isArchived) continue;
       const dto = buildDTOFromMemory(mac);
-      if (dto) {
-        // Filter by session participants if sessionId provided
-        if (sessionParticipantIds && dto.participantId && !sessionParticipantIds.has(dto.participantId)) continue;
-        if (sessionParticipantIds && !dto.participantId) continue;
-        results.push(dto);
-      }
+      if (dto) results.push(dto);
     }
     return results;
   }
@@ -481,11 +466,7 @@ export async function getAllCurrentTelemetry(sessionId?: string): Promise<Curren
   for (const ct of allCt) {
     if (ct.device.isIgnored || ct.device.isArchived) continue;
     const dto = await buildCurrentTelemetryDTO(ct.deviceMac);
-    if (dto) {
-      if (sessionParticipantIds && dto.participantId && !sessionParticipantIds.has(dto.participantId)) continue;
-      if (sessionParticipantIds && !dto.participantId) continue;
-      results.push(dto);
-    }
+    if (dto) results.push(dto);
   }
   return results;
 }

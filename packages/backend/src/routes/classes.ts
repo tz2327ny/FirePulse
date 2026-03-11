@@ -92,4 +92,20 @@ router.delete('/:classId/participants/:participantId/device', requireRole('admin
   res.json({ data: result });
 });
 
+// Resolved roster for dashboard (with company override applied)
+router.get('/:id/roster', async (req: Request, res: Response) => {
+  const roster = await classService.getRosterWithDevices(req.params.id);
+  res.json({ data: roster });
+});
+
+// Update company override for a class participant
+const updateCompanySchema = z.object({
+  company: z.string().max(100).nullable(),
+});
+
+router.patch('/:classId/participants/:participantId/company', requireRole('admin', 'instructor'), validate(updateCompanySchema), async (req: Request, res: Response) => {
+  const result = await classService.updateParticipantCompany(req.params.classId, req.params.participantId, req.body.company);
+  res.json({ data: result });
+});
+
 export default router;

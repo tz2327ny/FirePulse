@@ -4,18 +4,16 @@ import { api } from '../api/client.js';
 import { updateClockOffset } from '../lib/clockSync.js';
 import type { CurrentTelemetryDTO } from '@heartbeat/shared';
 
-export function useTelemetry(sessionId?: string) {
+export function useTelemetry() {
   const { socket } = useSocket();
   const [telemetry, setTelemetry] = useState<Map<string, CurrentTelemetryDTO>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
 
-  // Initial fetch — re-fetch when sessionId changes
+  // Initial fetch
   useEffect(() => {
     setIsLoading(true);
-    const params = sessionId ? `?sessionId=${sessionId}` : '';
-    api.get(`/telemetry/current${params}`)
+    api.get('/telemetry/current')
       .then((res) => {
-        // Sync clock offset from server timestamp
         if (res.data.serverTime) updateClockOffset(res.data.serverTime);
         const map = new Map<string, CurrentTelemetryDTO>();
         for (const t of res.data.data) {
@@ -25,14 +23,13 @@ export function useTelemetry(sessionId?: string) {
       })
       .catch(() => {})
       .finally(() => setIsLoading(false));
-  }, [sessionId]);
+  }, []);
 
   // Socket.IO updates
   useEffect(() => {
     if (!socket) return;
 
     const handler = (updates: CurrentTelemetryDTO[], serverTime?: string) => {
-      // Sync clock offset from server timestamp on every WS batch
       if (serverTime) updateClockOffset(serverTime);
       setTelemetry((prev) => {
         const next = new Map(prev);

@@ -113,6 +113,18 @@ export interface UpdateClassRequest {
   description?: string;
 }
 
+// ---- Class Roster (resolved for dashboard) ----
+export interface ClassRosterItemDTO {
+  classParticipantId: string;
+  participantId: string;
+  firstName: string;
+  lastName: string;
+  company: string;           // resolved: defaultCompanyOverride ?? participant.company
+  deviceId: string | null;
+  deviceMac: string | null;
+  deviceShortId: string | null;
+}
+
 // ---- Sessions ----
 export interface SessionBreakDTO {
   startedAt: string;

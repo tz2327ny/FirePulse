@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '../api/client.js';
 import type { ParticipantDTO } from '@heartbeat/shared';
-import { BookOpen, Plus, Pencil, Archive, Users, UserPlus, X, ChevronDown, ChevronUp, Link2, Unlink } from 'lucide-react';
+import { BookOpen, Plus, Pencil, Archive, Users, UserPlus, X, ChevronDown, ChevronUp, Link2, Unlink, Building2 } from 'lucide-react';
 import { useCanWrite } from '../hooks/useCanWrite.js';
 
 interface DeviceInfo {
@@ -15,6 +15,7 @@ interface ClassParticipantItem {
   id: string;
   participantId: string;
   deviceId: string | null;
+  defaultCompanyOverride: string | null;
   device: DeviceInfo | null;
   participant: {
     id: string;
@@ -154,6 +155,25 @@ export function ClassesPage() {
     await fetchClassDetail(classId);
   };
 
+  // Company override
+  const [editingCompanyCpId, setEditingCompanyCpId] = useState<string | null>(null);
+  const [companyValue, setCompanyValue] = useState('');
+
+  const startEditCompany = (cp: ClassParticipantItem) => {
+    setEditingCompanyCpId(cp.id);
+    setCompanyValue(cp.defaultCompanyOverride || cp.participant.company);
+  };
+
+  const handleSaveCompany = async (classId: string, participantId: string) => {
+    const cp = classDetail?.classParticipants.find((c) => c.participantId === participantId);
+    // If value matches the participant's default, clear the override
+    const override = companyValue === cp?.participant.company ? null : companyValue || null;
+    await api.patch(`/classes/${classId}/participants/${participantId}/company`, { company: override });
+    setEditingCompanyCpId(null);
+    setCompanyValue('');
+    await fetchClassDetail(classId);
+  };
+
   const activeClasses = classes.filter((c) => !c.isArchived);
 
   // Devices already assigned in the current class
@@ -267,9 +287,34 @@ export function ClassesPage() {
                     {classDetail.classParticipants.map((cp) => (
                       <div key={cp.id} className="flex items-center justify-between px-3 py-2 text-sm">
                         <div className="flex items-center gap-3">
-                          <div>
+                          <div className="flex items-center gap-2">
                             <span className="font-medium dark:text-gray-200">{cp.participant.firstName} {cp.participant.lastName}</span>
-                            <span className="ml-2 text-gray-500 dark:text-gray-400">{cp.participant.company}</span>
+                            {editingCompanyCpId === cp.id ? (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  className="input py-0 px-1.5 text-xs w-28"
+                                  value={companyValue}
+                                  onChange={(e) => setCompanyValue(e.target.value)}
+                                  onKeyDown={(e) => e.key === 'Enter' && handleSaveCompany(c.id, cp.participantId)}
+                                  autoFocus
+                                />
+                                <button onClick={() => handleSaveCompany(c.id, cp.participantId)} className="btn-primary px-1.5 py-0 text-xs">Save</button>
+                                <button onClick={() => setEditingCompanyCpId(null)} className="btn-ghost p-0.5 text-xs"><X className="h-3 w-3" /></button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => canWriteClasses && startEditCompany(cp)}
+                                className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${
+                                  cp.defaultCompanyOverride
+                                    ? 'bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
+                                    : 'text-gray-500 dark:text-gray-400'
+                                } ${canWriteClasses ? 'hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer' : ''}`}
+                                title={cp.defaultCompanyOverride ? `Override (default: ${cp.participant.company})` : 'Click to set company override'}
+                              >
+                                <Building2 className="h-3 w-3" />
+                                {cp.defaultCompanyOverride || cp.participant.company}
+                              </button>
+                            )}
                           </div>
                           {/* Device assignment */}
                           {assigningCpId === cp.id ? (

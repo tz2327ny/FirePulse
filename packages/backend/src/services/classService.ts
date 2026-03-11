@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import type { ClassRosterItemDTO } from '@heartbeat/shared';
 
 export async function list(includeArchived = false) {
   return prisma.class.findMany({
@@ -72,6 +73,32 @@ export async function unassignDevice(classId: string, participantId: string) {
   return prisma.classParticipant.update({
     where: { classId_participantId: { classId, participantId } },
     data: { deviceId: null },
+    include: { participant: true, device: true },
+  });
+}
+
+export async function getRosterWithDevices(classId: string): Promise<ClassRosterItemDTO[]> {
+  const classParticipants = await prisma.classParticipant.findMany({
+    where: { classId },
+    include: { participant: true, device: true },
+  });
+
+  return classParticipants.map((cp: any) => ({
+    classParticipantId: cp.id,
+    participantId: cp.participantId,
+    firstName: cp.participant.firstName,
+    lastName: cp.participant.lastName,
+    company: cp.defaultCompanyOverride || cp.participant.company,
+    deviceId: cp.deviceId,
+    deviceMac: cp.device?.macAddress || null,
+    deviceShortId: cp.device?.shortId || null,
+  }));
+}
+
+export async function updateParticipantCompany(classId: string, participantId: string, company: string | null) {
+  return prisma.classParticipant.update({
+    where: { classId_participantId: { classId, participantId } },
+    data: { defaultCompanyOverride: company },
     include: { participant: true, device: true },
   });
 }

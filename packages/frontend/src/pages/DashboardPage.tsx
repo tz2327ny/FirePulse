@@ -1,18 +1,20 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTelemetry } from '../hooks/useTelemetry.js';
+import { useClassContext } from '../hooks/useClassContext.js';
 import { useAlerts } from '../hooks/useAlerts.js';
 import { useRehab } from '../hooks/useRehab.js';
 import { computeFreshnessState } from '@heartbeat/shared';
 import { getServerAdjustedNow } from '../lib/clockSync.js';
 import { TelemetryTable } from '../components/dashboard/TelemetryTable.js';
 import { CompanyTileView } from '../components/dashboard/CompanyTileView.js';
+import { ClassPicker } from '../components/dashboard/ClassPicker.js';
+import { ClassRosterPreview } from '../components/dashboard/ClassRosterPreview.js';
 import { ConfirmDialog } from '../components/common/ConfirmDialog.js';
 import { api } from '../api/client.js';
-import type { SessionDTO, CurrentTelemetryDTO } from '@heartbeat/shared';
+import type { CurrentTelemetryDTO } from '@heartbeat/shared';
 import { SessionState, FreshnessState } from '@heartbeat/shared';
-import { Link } from 'react-router-dom';
-import { AlertTriangle, Bell, Activity, Heart, Pause, Square, Play, Timer, Volume2, VolumeX, Table2, LayoutGrid, EyeOff, Eye } from 'lucide-react';
+import { AlertTriangle, Bell, Activity, Heart, Pause, Square, Play, Timer, Volume2, VolumeX, Table2, LayoutGrid, EyeOff, Eye, ArrowLeft } from 'lucide-react';
 import { useElapsedTimer } from '../hooks/useElapsedTimer.js';
 import { useAudioAlert } from '../hooks/useAudioAlert.js';
 import { useCanWrite } from '../hooks/useCanWrite.js';
@@ -20,29 +22,71 @@ import { cn } from '../utils/cn.js';
 
 export function DashboardPage() {
   const navigate = useNavigate();
-  const [currentSession, setCurrentSession] = useState<SessionDTO | null>(null);
-  const [sessionLoaded, setSessionLoaded] = useState(false);
-  const { telemetryArray, isLoading } = useTelemetry(currentSession?.id);
+  const {
+    classes, selectedClassId, selectedClass, selectClass, clearClass,
+    roster, rosterDeviceMacs, currentSession, setCurrentSession,
+    isSessionLoaded, isLoading: isClassLoading, refreshSession,
+  } = useClassContext();
+  const { telemetryArray, isLoading: isTelemetryLoading } = useTelemetry();
   const { activeAlerts, acknowledge } = useAlerts(currentSession?.id);
   const { createVisit, inRehabParticipantIds, rehabDispositions } = useRehab(currentSession?.id);
   const [sendingAll, setSendingAll] = useState(false);
   const [sendAllConfirm, setSendAllConfirm] = useState<{ participantIds: string[]; names: string[] } | null>(null);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
-  const { isEnabled: isAudioEnabled, toggleEnabled: toggleAudio, playTestTone, audioReady, ensureAudioContext } = useAudioAlert();
+  const [isStartingSession, setIsStartingSession] = useState(false);
+  const { toggleEnabled: toggleAudio, playTestTone, ensureAudioContext } = useAudioAlert();
   const [audioOn, setAudioOn] = useState(() => localStorage.getItem('heartbeat_audio_alerts') !== 'false');
   const [viewMode, setViewMode] = useState<'table' | 'tiles'>(() =>
     (localStorage.getItem('heartbeat_dashboard_view') as 'table' | 'tiles') || 'table'
   );
   const [showDismissed, setShowDismissed] = useState(false);
   const { canWriteSessions, canSendToRehab } = useCanWrite();
-  const data = telemetryArray();
+  const allData = telemetryArray();
 
-  // Phase 7: Hide offline dismissed participants
+  // Filter telemetry to class roster devices + enrich with class company overrides
+  const { classData, unassignedFreshDevices } = useMemo(() => {
+    if (!selectedClassId || rosterDeviceMacs.size === 0) {
+      return { classData: allData, unassignedFreshDevices: [] as CurrentTelemetryDTO[] };
+    }
+
+    // Build roster lookup by deviceMac
+    const rosterByMac = new Map(roster.filter((r) => r.deviceMac).map((r) => [r.deviceMac!, r]));
+
+    const filtered: CurrentTelemetryDTO[] = [];
+    const unassigned: CurrentTelemetryDTO[] = [];
+
+    for (const row of allData) {
+      const rosterEntry = rosterByMac.get(row.deviceMac);
+      if (rosterEntry) {
+        // Enrich with class roster data (company override, name from roster)
+        filtered.push({
+          ...row,
+          participantFirstName: rosterEntry.firstName ?? row.participantFirstName,
+          participantLastName: rosterEntry.lastName ?? row.participantLastName,
+          participantCompany: rosterEntry.company ?? row.participantCompany,
+        });
+      } else {
+        // Device not in roster — check if it's actively collecting data
+        if (row.heartRate != null) {
+          const freshness = row.lastSeenAt
+            ? computeFreshnessState(new Date(row.lastSeenAt), getServerAdjustedNow())
+            : FreshnessState.OFFLINE;
+          if (freshness === FreshnessState.LIVE || freshness === FreshnessState.DELAYED) {
+            unassigned.push(row);
+          }
+        }
+      }
+    }
+
+    return { classData: filtered, unassignedFreshDevices: unassigned };
+  }, [allData, selectedClassId, rosterDeviceMacs, roster]);
+
+  // Hide offline dismissed participants
   const { visibleData, dismissedCount } = useMemo(() => {
-    if (showDismissed) return { visibleData: data, dismissedCount: 0 };
+    if (showDismissed) return { visibleData: classData, dismissedCount: 0 };
     const visible: CurrentTelemetryDTO[] = [];
     let dismissed = 0;
-    for (const row of data) {
+    for (const row of classData) {
       const isDismissedStatus = row.participantStatus === 'left_early' || row.participantStatus === 'removed';
       const freshness = row.lastSeenAt ? computeFreshnessState(new Date(row.lastSeenAt), getServerAdjustedNow()) : FreshnessState.OFFLINE;
       const isStaleOrOffline = freshness === FreshnessState.STALE || freshness === FreshnessState.OFFLINE;
@@ -53,7 +97,7 @@ export function DashboardPage() {
       }
     }
     return { visibleData: visible, dismissedCount: dismissed };
-  }, [data, showDismissed]);
+  }, [classData, showDismissed]);
 
   const handleViewToggle = useCallback((mode: 'table' | 'tiles') => {
     setViewMode(mode);
@@ -66,12 +110,6 @@ export function DashboardPage() {
     currentSession?.timing?.totalBreakMs ?? 0
   );
 
-  useEffect(() => {
-    api.get('/sessions/current').then((res) => {
-      setCurrentSession(res.data.data);
-    }).catch(() => {}).finally(() => setSessionLoaded(true));
-  }, []);
-
   // ---- Helpers ----
 
   const isEligibleForRehab = useCallback((row: CurrentTelemetryDTO): boolean => {
@@ -82,17 +120,25 @@ export function DashboardPage() {
     return freshness === FreshnessState.LIVE || freshness === FreshnessState.DELAYED;
   }, [inRehabParticipantIds]);
 
-  // Unassigned devices that are actively collecting HR data
-  const unassignedFreshDevices = useMemo(() => {
-    return data.filter((row) => {
-      if (row.participantId) return false;
-      if (row.heartRate == null) return false;
-      const freshness = row.lastSeenAt ? computeFreshnessState(new Date(row.lastSeenAt), getServerAdjustedNow()) : FreshnessState.OFFLINE;
-      return freshness === FreshnessState.LIVE || freshness === FreshnessState.DELAYED;
-    });
-  }, [data]);
-
   // ---- Handlers ----
+
+  const handleStartSession = useCallback(async (name: string) => {
+    if (!selectedClassId) return;
+    setIsStartingSession(true);
+    try {
+      // Create session from class
+      const createRes = await api.post('/sessions', { name, classId: selectedClassId });
+      const session = createRes.data.data;
+      // Immediately activate it
+      await api.post(`/sessions/${session.id}/state`, { state: 'active' });
+      // Re-fetch to get full session data with timing
+      refreshSession();
+    } catch (err) {
+      console.error('Failed to start session', err);
+    } finally {
+      setIsStartingSession(false);
+    }
+  }, [selectedClassId, refreshSession]);
 
   const handleStatusChange = useCallback(async (sessionParticipantId: string, newStatus: string) => {
     try {
@@ -105,21 +151,19 @@ export function DashboardPage() {
   const handleSendToRehab = useCallback(async (participantId: string) => {
     try {
       await createVisit(participantId);
-      // Stay on dashboard — the "In Rehab" badge updates in real-time via WebSocket
     } catch (err) {
       console.error('Failed to send to rehab', err);
     }
   }, [createVisit]);
 
   const handleSendAllToRehabClick = useCallback(() => {
-    const eligible = data.filter(isEligibleForRehab);
+    const eligible = classData.filter(isEligibleForRehab);
     if (eligible.length === 0) return;
-
     setSendAllConfirm({
       participantIds: eligible.map((r) => r.participantId!),
       names: eligible.map((r) => `${r.participantFirstName} ${r.participantLastName}`),
     });
-  }, [data, isEligibleForRehab]);
+  }, [classData, isEligibleForRehab]);
 
   const handleSendAllConfirmed = useCallback(async () => {
     if (!sendAllConfirm) return;
@@ -139,42 +183,123 @@ export function DashboardPage() {
     if (!currentSession) return;
     try {
       await api.post(`/sessions/${currentSession.id}/state`, { state: newState });
-      // Re-fetch to get updated timing data
-      const res = await api.get('/sessions/current');
-      setCurrentSession(res.data.data);
+      if (newState === SessionState.ENDED) {
+        setCurrentSession(null);
+      } else {
+        refreshSession();
+      }
     } catch (err) {
       console.error('Failed to change session state', err);
     }
-  }, [currentSession]);
+  }, [currentSession, refreshSession, setCurrentSession]);
 
+  // ========================================
+  // STATE 1: No class selected — show picker
+  // ========================================
+  if (!selectedClassId || isClassLoading) {
+    return (
+      <div className="space-y-4">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Live Dashboard</h1>
+        {isClassLoading ? (
+          <div className="flex items-center justify-center py-16 text-gray-400">Loading classes...</div>
+        ) : (
+          <ClassPicker classes={classes} onSelect={selectClass} />
+        )}
+      </div>
+    );
+  }
+
+  // ========================================
+  // STATE 2: Class selected, no active session — show roster + start session
+  // ========================================
+  if (isSessionLoaded && !currentSession) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={clearClass}
+              className="btn-ghost p-1.5"
+              title="Change class"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{selectedClass?.name || 'Class'}</h1>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {roster.length} participant{roster.length !== 1 ? 's' : ''} — Ready to start
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Unassigned Device Warning */}
+        {unassignedFreshDevices.length > 0 && (
+          <div className="rounded-xl border border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/30 p-4">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
+              <span className="font-semibold text-yellow-800 dark:text-yellow-300">
+                {unassignedFreshDevices.length} unassigned device{unassignedFreshDevices.length !== 1 ? 's' : ''} collecting data
+              </span>
+            </div>
+            <p className="mt-1 text-sm text-yellow-700 dark:text-yellow-400">
+              {unassignedFreshDevices.map((d) => d.shortId).join(', ')}
+              {' '}&mdash; Not in this class roster.
+            </p>
+          </div>
+        )}
+
+        <ClassRosterPreview
+          selectedClass={selectedClass!}
+          roster={roster}
+          allTelemetry={allData}
+          onStartSession={handleStartSession}
+          isStarting={isStartingSession}
+        />
+      </div>
+    );
+  }
+
+  // ========================================
+  // STATE 3: Class selected, session running — full live dashboard
+  // ========================================
   return (
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Live Dashboard</h1>
-          {currentSession && (
-            <div className="mt-0.5 flex items-center gap-3">
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Session: <span className="font-medium dark:text-gray-300">{currentSession.name}</span>
-                {' '}
-                <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                  currentSession.state === 'active' ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' :
-                  currentSession.state === 'paused' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400' :
-                  currentSession.state === 'standby' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400' :
-                  'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
-                }`}>
-                  {currentSession.state}
-                </span>
-              </p>
-              {currentSession.startedAt && currentSession.state !== SessionState.ENDED && (
-                <span className="inline-flex items-center gap-1.5 font-mono text-lg font-bold text-gray-700 dark:text-gray-300">
-                  <Timer className="h-4 w-4 text-gray-400" />
-                  {elapsed}
-                </span>
-              )}
-            </div>
-          )}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={clearClass}
+            className="btn-ghost p-1.5"
+            title="Change class"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{selectedClass?.name || 'Live Dashboard'}</h1>
+            {currentSession && (
+              <div className="mt-0.5 flex items-center gap-3">
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  {currentSession.name}
+                  {' '}
+                  <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                    currentSession.state === 'active' ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' :
+                    currentSession.state === 'paused' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400' :
+                    currentSession.state === 'standby' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400' :
+                    'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+                  }`}>
+                    {currentSession.state}
+                  </span>
+                </p>
+                {currentSession.startedAt && currentSession.state !== SessionState.ENDED && (
+                  <span className="inline-flex items-center gap-1.5 font-mono text-lg font-bold text-gray-700 dark:text-gray-300">
+                    <Timer className="h-4 w-4 text-gray-400" />
+                    {elapsed}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3 text-sm">
           <div className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
@@ -242,7 +367,7 @@ export function DashboardPage() {
             </button>
           )}
 
-          {/* Session Control Buttons (admin + instructor only) */}
+          {/* Session Control Buttons */}
           {canWriteSessions && currentSession && currentSession.state === SessionState.STANDBY && (
             <button
               onClick={() => handleSessionStateChange(SessionState.ACTIVE)}
@@ -284,8 +409,8 @@ export function DashboardPage() {
             </>
           )}
 
-          {/* Send All to Rehab (all roles can send) */}
-          {canSendToRehab && currentSession && data.some(isEligibleForRehab) && (
+          {/* Send All to Rehab */}
+          {canSendToRehab && currentSession && classData.some(isEligibleForRehab) && (
             <button
               onClick={handleSendAllToRehabClick}
               disabled={sendingAll}
@@ -309,7 +434,7 @@ export function DashboardPage() {
           </div>
           <p className="mt-1 text-sm text-yellow-700 dark:text-yellow-400">
             {unassignedFreshDevices.map((d) => d.shortId).join(', ')}
-            {' '}&mdash; Assign participants to avoid data loss.
+            {' '}&mdash; Not in this class roster.
           </p>
         </div>
       )}
@@ -349,47 +474,30 @@ export function DashboardPage() {
         </div>
       )}
 
-      {/* Session-gated: empty state when no active session */}
-      {sessionLoaded && !currentSession ? (
-        <div className="card flex flex-col items-center justify-center py-20 text-center">
-          <Play className="h-12 w-12 text-gray-300 dark:text-gray-600 mb-4" />
-          <h2 className="text-xl font-semibold text-gray-600 dark:text-gray-400">No Active Session</h2>
-          <p className="mt-2 text-sm text-gray-400 dark:text-gray-500 max-w-sm">
-            Create or start a session to begin monitoring heart rates. Load a class roster or start a standalone session.
-          </p>
-          <Link
-            to="/sessions"
-            className="btn-primary mt-4 inline-flex items-center gap-1.5"
-          >
-            <Play className="h-4 w-4" /> Go to Sessions
-          </Link>
-        </div>
-      ) : (
-        /* Telemetry View */
-        <div className="card p-0 overflow-hidden">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-16 text-gray-400 dark:text-gray-500">
-              Loading telemetry...
-            </div>
-          ) : viewMode === 'tiles' ? (
-            <CompanyTileView
-              data={visibleData}
-              onStatusChange={canWriteSessions && currentSession ? handleStatusChange : undefined}
-              onSendToRehab={canSendToRehab && currentSession ? handleSendToRehab : undefined}
-              inRehabParticipantIds={inRehabParticipantIds}
-              rehabDispositions={rehabDispositions}
-            />
-          ) : (
-            <TelemetryTable
-              data={visibleData}
-              onStatusChange={canWriteSessions && currentSession ? handleStatusChange : undefined}
-              onSendToRehab={canSendToRehab && currentSession ? handleSendToRehab : undefined}
-              inRehabParticipantIds={inRehabParticipantIds}
-              rehabDispositions={rehabDispositions}
-            />
-          )}
-        </div>
-      )}
+      {/* Telemetry View */}
+      <div className="card p-0 overflow-hidden">
+        {isTelemetryLoading ? (
+          <div className="flex items-center justify-center py-16 text-gray-400 dark:text-gray-500">
+            Loading telemetry...
+          </div>
+        ) : viewMode === 'tiles' ? (
+          <CompanyTileView
+            data={visibleData}
+            onStatusChange={canWriteSessions && currentSession ? handleStatusChange : undefined}
+            onSendToRehab={canSendToRehab && currentSession ? handleSendToRehab : undefined}
+            inRehabParticipantIds={inRehabParticipantIds}
+            rehabDispositions={rehabDispositions}
+          />
+        ) : (
+          <TelemetryTable
+            data={visibleData}
+            onStatusChange={canWriteSessions && currentSession ? handleStatusChange : undefined}
+            onSendToRehab={canSendToRehab && currentSession ? handleSendToRehab : undefined}
+            inRehabParticipantIds={inRehabParticipantIds}
+            rehabDispositions={rehabDispositions}
+          />
+        )}
+      </div>
 
       {/* Send All to Rehab Confirmation Dialog */}
       {sendAllConfirm && (
