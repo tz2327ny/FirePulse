@@ -196,7 +196,7 @@ export function DashboardPage() {
   // ========================================
   // STATE 1: No class selected — show picker
   // ========================================
-  if (!selectedClassId || isClassLoading) {
+  if (!selectedClassId || isClassLoading || (selectedClassId && !selectedClass)) {
     return (
       <div className="space-y-4">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Live Dashboard</h1>

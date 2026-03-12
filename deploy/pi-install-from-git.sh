@@ -122,17 +122,26 @@ echo "  Generating Prisma client for $(uname -m)..."
 cd "$APP_DIR/packages/backend"
 npx prisma generate
 
+# Create .env for Prisma (must exist for all prisma commands)
+echo "  Creating backend .env..."
+cat > "$APP_DIR/packages/backend/.env" <<EOF
+DATABASE_URL="file:$DATA_DIR/firepulse.db"
+JWT_SECRET="$(head -c 32 /dev/urandom | base64 | tr -d '=/+')"
+NODE_ENV=production
+EOF
+
 # Copy template database if needed
 if [ ! -f "$DATA_DIR/firepulse.db" ]; then
   if [ -f "$APPLIANCE_DIR/data/template.db" ]; then
     echo "  Copying template database..."
     cp "$APPLIANCE_DIR/data/template.db" "$DATA_DIR/firepulse.db"
-  else
-    echo "  No template DB found, creating from schema..."
-    cd "$APP_DIR/packages/backend"
-    DATABASE_URL="file:$DATA_DIR/firepulse.db" npx prisma db push --skip-generate --accept-data-loss 2>&1 | tail -3
   fi
 fi
+
+# Always sync schema (applies new columns/tables to existing DBs)
+echo "  Syncing database schema..."
+cd "$APP_DIR/packages/backend"
+npx prisma db push --skip-generate --accept-data-loss 2>&1 | tail -3
 
 chown -R firepulse:firepulse "$APP_DIR"
 
